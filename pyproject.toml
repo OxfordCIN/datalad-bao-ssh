@@ -1,9 +1,68 @@
 [build-system]
-requires = ["setuptools >= 59.0.0", "wheel"]
+requires = [
+    "setuptools >= 59.0.0",
+    "wheel",
+    "sphinx",
+    "sphinx_rtd_theme"
+    ]
+build-backend = "setuptools.build_meta"
 
-[tool.codespell]
-# Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = '.venv,venvs,.git,build,*.egg-info,*.lock,.asv,.mypy_cache,.tox,fixtures,_version.py,*.pem,versioneer.py'
-check-hidden = true
-# ignore-regex =
-# ignore-words-list = 
+[project]
+name            = "datalad-extension-bao-ssh"
+dynamic         = ["version"]
+url             = "https://git.fmrib.ox.ac.uk/open-science/datalad/datalad-extension-bao-ssh"
+description     = "Datalad extension for setting up OpenBao signed SSH certificates"
+readme          = {file = "README.md", content-type="text/markdown"}
+license         = {text = "MIT"}
+requires-python = ">= 3.10"
+dependencies    = [
+    "datalad >= 0.18.0"
+    ]
+classifiers     = [
+    "Programming Language :: Python",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta"
+    ]
+authors         = [
+    {name = "Duncan Mortimer", email = "duncan.mortimer@ndcn.ox.ac.uk"}
+    ]
+
+[project.urls]
+"Repository"    = "https://git.fmrib.ox.ac.uk/open-science/datalad/datalad-extension-bao-ssh"
+"Documentation" = "https://git.fmrib.ox.ac.uk/open-science/datalad/datalad-extension-bao-ssh"
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+  "pytest-cov",
+  "pytest-httpserver",
+  "pytest-mock",
+  "coverage",
+  "tomli; python_version < \"3.12\""
+]
+
+style = [
+  "pylint",
+  "flake8"
+]
+
+[project.entry-points."datalad.extensions"]
+bao_ssh = "datalab_bao_ssh:setup_ssh"
+
+[tool.setuptools.packages.find]
+include = ["datalad_bao_ssh*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "datalad_bao_ssh.version.VERSION"}
+
+[tool.coverage.run]
+include = ["datalad_bao_ssh/*"]
+omit    = ["datalad_bao_ssh/tests/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["datalad_bao_ssh/tests"]
+addopts   = "-v --cov=datalad_bao_ssh --showlocals --import-mode=importlib"
+markers   = [
+  "noroottest: Need to be executed as non-root user (will fail otherwise)",
+  "unixtest:   Only works on *nix systems"]

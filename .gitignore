@@ -12,3 +12,6 @@ build/
 dist/
 .idea/
 venvs/
+.vscode/settings.json
+openbao_ssh.json
+htmlcov

@@ -1,9 +1,14 @@
-DataLad extension template
+DataLad extension Oxcin-Login
 **************************
 
-This is a template for creating a `DataLad <http://datalad.org>`__ extension
-that equips DataLad with additional functionality.
+This extension will setup your SSH environment for authentication
+with short-lived SSH certificates, signed by an OpenBao server.
+Ordinarily you only need to run this once, unless something in your
+environment changes (e.g. a server address needs to be updated) or
+if your ~/.ssh/config file is lost.
 
+The command will attempt to download some basic configuration, if
+this fails you will be prompted for this configuration information.
 
 API
 ===

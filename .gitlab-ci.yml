@@ -1,0 +1,107 @@
+stages:
+  - test
+  - style
+  - build
+  - deploy
+
+
+style:
+  stage: style
+  image: python:3.12
+  tags:
+    - docker
+  script:
+    - apt-get -y update
+    - pip install flake8
+    - pip install .
+    - flake8 --max-line-length=120 --exclude=build
+
+
+docs:
+  stage: build
+  tags:
+    - docker
+  image: python:3.9
+  before_script:
+    - python -m pip install --upgrade pip setuptools
+    - pip install -r requirements-devel.txt
+    - pip install .
+  script:
+    - make -C docs html
+  artifacts:
+    paths:
+      - docs/_build/html
+    expire_in: 1 week
+
+
+.test: &test_template
+  stage: test
+  tags:
+    - docker
+  parallel:
+    matrix:
+     - PYVER: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+  image: python:$PYVER
+  except:
+    - tags
+
+
+test:
+  <<: *test_template
+  script:
+    - apt-get -y update
+    - pip install pytest pytest-cov pytest-mock pytest-httpserver
+    - pip install .
+    - python -m pytest
+
+# Build source and wheel distributions
+# suitable for uploading to PyPi.
+build-pypi-dist:
+
+  stage: build
+  image: python:3.12
+
+  tags:
+    - docker
+
+  script:
+    - pip install --upgrade wheel setuptools twine build
+    - python -m build
+    - twine check dist/*
+    - sdist=`find dist -maxdepth 1 -name *.tar.gz`
+    - wheel=`find dist -maxdepth 1 -name *.whl`
+    - for target in $sdist $wheel; do
+    -   python -m venv test.venv
+    -   . test.venv/bin/activate
+    -   pip install --upgrade pip setuptools
+    -   pip install $target
+    -   deactivate
+    -   rm -r test.venv
+    - done
+
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - dist/*
+
+
+# Publish built packages to pypi.
+# Requires TWINE_USERNAME and
+# TWINE_PASSWORD variables containing
+# PyPi login credentials.
+deploy-pypi-dist:
+  stage: deploy
+  only:
+    - tags
+  image: python:3.12
+  when:  manual
+
+  tags:
+    - docker
+
+  dependencies:
+    - build-pypi-dist
+
+  script:
+   - pip install wheel setuptools twine
+   - twine upload dist/*

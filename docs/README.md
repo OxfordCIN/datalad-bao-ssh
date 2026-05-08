@@ -24,12 +24,3 @@ make -C docs html
 ```
 
 Navigate to `docs/build/` and open `index.html` in your browser to view your documentation.
-
-### Remote building and testing
-
-The GitHub Action workflow located at `.github/workflows/docbuild.yml` will run on a push or pull request to your GitHub repository's master/main branch. This builds the documentation remotely and serves as an automated documentation test.
-
-### Publishing your documentation
-
-- If you maintain your extension yourself *outside of the scope of the DataLad GitHub organization*, you can follow [these instructions](https://docs.readthedocs.io/en/stable/integrations.html) for integrating your version control system (such as GitHub) with Read the Docs.
-- If your extension is *maintained by the DataLad developer team*, please create an issue asking for help with the setup.

@@ -1,30 +1,30 @@
-"""DataLad demo extension"""
+"""DataLad OpenBao managed SSH certificates extension"""
 
 __docformat__ = 'restructuredtext'
+from . import _version
 
 import logging
-lgr = logging.getLogger('datalad.helloworld')
+lgr = logging.getLogger('datalad_bao_ssh')
 
 # Defines a datalad command suite.
 # This variable must be bound as a setuptools entrypoint
 # to be found by datalad
 command_suite = (
     # description of the command suite, displayed in cmdline help
-    "Demo DataLad command suite",
+    "OpenBao SSH certificates DataLad command suite",
     [
         # specification of a command, any number of commands can be defined
         (
             # importable module that contains the command implementation
-            'datalad_helloworld.hello_cmd',
+            'datalad_bao_ssh.ssh_setup',
             # name of the command class implementation in above module
-            'HelloWorld',
+            'bao_ssh',
             # optional name of the command in the cmdline API
-            'hello-cmd',
+            'ssh-setup',
             # optional name of the command in the Python API
-            'hello_cmd'
+            'ssh_setup'
         ),
     ]
 )
 
-from . import _version
-__version__ = _version.get_versions()['version']
+__version__ = _version.VERSION

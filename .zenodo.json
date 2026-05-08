@@ -1,14 +1,9 @@
 {
   "creators": [
     {
-      "affiliation": "Edit me!",
-      "name": "Edit me!",
-      "orcid": "Edit me!"
-    },
-    {
-      "affiliation": "Edit me!",
-      "name": "Edit me!",
-      "orcid": "Edit me!"
+      "affiliation": "University of Oxford",
+      "name": "Duncan Mortimer",
+      "orcid": "0000-0002-7483-2024"
     }
   ],
   "keywords": [
@@ -18,6 +13,6 @@
     "version control"
   ],
   "access_right": "open",
-  "license": "Edit me!",
+  "license": "MIT",
   "upload_type": "software"
 }
