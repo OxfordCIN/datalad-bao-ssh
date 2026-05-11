@@ -15,4 +15,5 @@ venvs/
 .vscode/settings.json
 openbao_ssh.json
 htmlcov
+*/.DS_Store
 .DS_Store

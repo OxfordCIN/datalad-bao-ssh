@@ -15,6 +15,7 @@ from datalad.support.extensions import register_config
 from datalad.ui import ui
 from datalad.interface.results import get_status_dict
 
+import getpass
 import logging
 import os
 import os.path
@@ -94,6 +95,8 @@ class setup_ssh(Interface):
              "Port that OpenBao is listening on"),
             ("BAOAUTH", "ldap",
              "Authentication backend URL component on OpenBao server"),
+            ("GIT_REQUIRES_USERNAME", False,
+             "Does your remote git server(s) use a per-user username?")
         ]
         for opt in options:
             config[opt[0]] = ui.question(
@@ -101,27 +104,43 @@ class setup_ssh(Interface):
                 default=opt[1],
                 title=opt[2]
             )
-        ssh_host = ''
-        config['SSH_HOSTS'] = []
+        ssh_host = 'NOHOST'
+        config['RIA_HOSTS'] = []
         while ssh_host != '':
             ssh_host = ui.question(
-                "Enter SSH endpoint host (hit return to end)"
+                "Enter Datalad RIA endpoint host name (hit return to end)"
             )
             if ssh_host != '':
-                config['SSH_HOSTS'].append(ssh_host)
+                config['RIA_HOSTS'].append(ssh_host)
+
+        config['GIT_SSH_HOSTS'] = []
+        ssh_host = 'NOHOST'
+        while ssh_host != '':
+            ssh_host = ui.question(
+                "Enter Datalad Git server host name (hit return to end)"
+            )
+            if ssh_host != '':
+                config['GIT_SSH_HOSTS'].append(ssh_host)
 
         return config
 
-    def ssh_host_stanza(self, host, identity_file, exec, cert_ext="-cert.pub"):
+    def ssh_host_stanza(
+            self, host, identity_file, exec,
+            cert_ext="-cert.pub", username=None):
         '''Templates the Match statement for a SSH target that calls the
         renewal script'''
 
-        return f'''Match host {host} exec "{exec}"
+        template = f'''Match host {host} exec "{exec}"
     IdentitiesOnly yes
     IdentityFile "{identity_file}"
     CertificateFile "{identity_file}{cert_ext}"
-
 '''
+        if username is not None:
+            template += f'    User "{username}"\n\n'
+        else:
+            template += '\n'
+
+        return template
 
     @staticmethod
     # decorator binds the command to the Dataset class as a method
@@ -146,6 +165,18 @@ class setup_ssh(Interface):
 
         status_dict = {'action': 'setup_ssh', 'status': 'ok'}
         if config:
+            usernames = {}
+            username_servers = config['RIA_HOSTS']
+            ssh_servers = config['RIA_HOSTS'] + config['GIT_SSH_HOSTS']
+            if config['GIT_REQUIRES_USERNAME']:
+                username_servers.extend(config['GIT_SSH_HOSTS'])
+            for ssh_host in username_servers:
+                usernames[ssh_host] = ui.question(
+                        "USERNAME",
+                        default=getpass.getuser(),
+                        title=f"Enter your username on the server {ssh_host}: "
+                    )
+
             ssh_folder = Path.home() / '.ssh'
             stage = "Installing renewal script"
             lgr.info(stage)
@@ -155,6 +186,9 @@ class setup_ssh(Interface):
             user_ssh_exec = (
                 ssh_folder
                 / f'{config['BAOHOST'].replace('.', '-')}-renew.sh')
+            skiplines = (
+                'RIA_HOSTS', 'GIT_REQUIRES_USERNAME',
+                'GIT_SSH_HOSTS', )
             try:
                 with as_file(ssh_exec) as ssh_exec_path:
                     with open(ssh_exec_path, 'r') as sshef:
@@ -164,13 +198,14 @@ class setup_ssh(Interface):
                                     line = f'#!{self.shell()}\n'
                                 else:
                                     for k, v in config.items():
-                                        if k == 'SSH_HOSTS':
+                                        if k in skiplines:
                                             continue
                                         if f'**{k}**' in line:
                                             line = line.replace(
                                                 f'**{k}**', str(v))
                                 lgr.debug(line)
                                 usshef.write(line)
+                os.chmod(user_ssh_exec, 0o700)
                 stage = (
                     "Building SSH configuration for Bao authenticated"
                     " servers")
@@ -185,13 +220,14 @@ class setup_ssh(Interface):
                     / f'{config['BAOHOST'].replace('.', '-')}.conf')
 
                 with open(ssh_conf_file, 'w') as sshcf:
-                    for host in config['SSH_HOSTS']:
+                    for host in ssh_servers:
                         sshcf.write(
                             self.ssh_host_stanza(
                                 host,
                                 idfile,
                                 user_ssh_exec,
-                                cert_ext))
+                                cert_ext,
+                                username=usernames.get(host, None)))
 
                 stage = "Including SSH configuration into main config file"
                 lgr.info(stage)
@@ -199,7 +235,7 @@ class setup_ssh(Interface):
                 main_ssh_conf = ssh_folder / 'config'
                 include_line = (
                     "# OpenBao renewals\nInclude"
-                    f" {os.path.basename(ssh_conf_file)}")
+                    f' "{os.path.basename(ssh_conf_file)}"')
                 with open(main_ssh_conf, 'r') as msshc:
                     found = include_line in msshc.read()
 

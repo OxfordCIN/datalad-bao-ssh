@@ -1,19 +1,22 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
 DEBUG="${DATALAD_BAO_SSH_DEBUG:-0}"
 CACERT="${DATALAD_BAO_SSH_CA_CERT:-}"
 ROLE="${DATALAD_BAO_SSH_ROLE:-**ROLE**}"
 PRINCIPAL="${DATALAD_BAO_SSH_PRINCIPAL:-**PRINCIPAL**}"
-CERTTYPE="${DATALAD_BAO_SSH_CERT_TYPE:-**CERTTYPE**}"
+CERTTYPE="${DATALAD_BAO_SSH_CERTTYPE:-**CERTTYPE**}"
 BAOHOST="${DATALAD_BAO_SSH_BAOHOST:-**BAOHOST**}"
-BAOPORT="${DATALAD_BAO_SSH_BAOPORT}:-**BAOPORT**}"
-BAOAUTH="${DATALAD_BAO_SSH_AUTHSERVICE}:**BAOAUTH**}"
+BAOPORT="${DATALAD_BAO_SSH_BAOPORT:-**BAOPORT**}"
+BAOAUTH="${DATALAD_BAO_SSH_BAOAUTH:-**BAOAUTH**}"
 
 BAOSRV="https://${BAOHOST}:${BAOPORT}"
 KEYFILE="id-${CERTTYPE}-${BAOHOST//./-}"
 PUBFILE="${KEYFILE}.pub"
 CERTFILE="${KEYFILE}-cert.pub"
+KEY="${HOME}/.ssh/${KEYFILE}"
+PUB="${HOME}/.ssh/${PUBFILE}"
+CERT="${HOME}/.ssh/${CERTFILE}"
 
 log() {
     printf '[%s] %s\n' "$1" "$2" >&2
@@ -35,17 +38,26 @@ error() {
     log ERROR "$*"
 }
 
-if [ -f "$CERTFILE" ]; then
-  expiry=$(ssh-keygen -L -f "$CERTFILE" \
+if [ -f "$CERT" ]; then
+  debug "Found $CERT"
+  expiry=$(ssh-keygen -L -f "$CERT" \
     | awk '/Valid:/ {print $5}')
   if ! epoc=$(date -d "$expiry" +%s 2>/dev/null); then
     epoc=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$expiry" +%s)
   fi
-
   now=$(date +%s)
+  debug "Expiry: $expiry, Epoc: $epoc, Now: $now"
   if [ "$epoc" -gt $((now + 300)) ]; then
     debug "Certificate not expired, exiting"
     exit 0
+  fi
+fi
+
+if [ ! -d "$HOME/.ssh" ]; then
+  mkdir "$HOME/.ssh"
+  chmod 0700 "$HONE/.ssh"
+  if which restorecon >/dev/null 2>&1 ; then
+    restorecon -R "$HOME/.ssh"
   fi
 fi
 
@@ -62,9 +74,18 @@ if [ -n "$CACERT" ]; then
 else
   ca_opt=()
 fi
+debug "$DEBUG"
+debug "$CACERT"
+debug "$ROLE"
+debug "$PRINCIPAL"
+debug "$CERTTYPE"
+debug "$BAOHOST"
+debug "$BAOPORT"
+debug "$BAOAUTH"
+debug "${BAOSRV}/v1/auth/${BAOAUTH}/login/${username}"
 TOKEN=$(curl -s "${ca_opt[@]}" \
     --request POST \
-    --header "Content-Type: application\json" \
+    --header "Content-Type: application/json" \
     --data "{\"password\":\"$PASSWORD\"}" \
     "${BAOSRV}/v1/auth/${BAOAUTH}/login/${username}" | jq -r '.auth.client_token')
 
@@ -97,7 +118,7 @@ fi
 echo "$SIGNED_CERT" > "$dl_cert_f"
 chmod 0644 "${dl_cert_f}"
 
-mv "$dl_key_f" "${HOME}/.ssh/${KEYFILE}" && \
-  mv "$dl_cert_f" "${HOME}/.ssh/${CERTFILE}" && \
-  mv "$dl_pub_f" "${HOME}/.ssh/${PUBFILE}"
+mv "$dl_key_f" "${KEY}" && \
+  mv "$dl_cert_f" "${CERT}" && \
+  mv "$dl_pub_f" "${PUB}"
 rmdir "$tmpdir"

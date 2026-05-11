@@ -38,6 +38,7 @@ test = [
   "pytest-cov",
   "pytest-httpserver",
   "pytest-mock",
+  "trustme",
   "coverage",
   "tomli; python_version < \"3.12\""
 ]
