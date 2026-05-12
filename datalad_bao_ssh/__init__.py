@@ -1,7 +1,7 @@
 """DataLad OpenBao managed SSH certificates extension"""
 
 __docformat__ = 'restructuredtext'
-from . import _version
+from . import version
 
 import logging
 lgr = logging.getLogger('datalad_bao_ssh')
@@ -27,4 +27,4 @@ command_suite = (
     ]
 )
 
-__version__ = _version.VERSION
+__version__ = version.VERSION

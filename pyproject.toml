@@ -10,7 +10,6 @@ build-backend = "setuptools.build_meta"
 [project]
 name            = "datalad-extension-bao-ssh"
 dynamic         = ["version"]
-url             = "https://git.fmrib.ox.ac.uk/open-science/datalad/datalad-extension-bao-ssh"
 description     = "Datalad extension for setting up OpenBao signed SSH certificates"
 readme          = {file = "README.md", content-type="text/markdown"}
 license         = {text = "MIT"}
@@ -49,7 +48,7 @@ style = [
 ]
 
 [project.entry-points."datalad.extensions"]
-bao_ssh = "datalab_bao_ssh:setup_ssh"
+bao_ssh = "datalad_bao_ssh.setup_ssh:setup_ssh"
 
 [tool.setuptools.packages.find]
 include = ["datalad_bao_ssh*"]
