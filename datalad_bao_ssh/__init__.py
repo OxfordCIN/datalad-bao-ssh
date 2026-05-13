@@ -4,7 +4,7 @@ __docformat__ = 'restructuredtext'
 from . import version
 
 import logging
-lgr = logging.getLogger('datalad_bao_ssh')
+lgr = logging.getLogger('datalad_bao_ss')
 
 # Defines a datalad command suite.
 # This variable must be bound as a setuptools entrypoint
@@ -16,13 +16,13 @@ command_suite = (
         # specification of a command, any number of commands can be defined
         (
             # importable module that contains the command implementation
-            'datalad_bao_ssh.setup_ssh',
+            'datalad_bao_ssh.bao_setup',
             # name of the command class implementation in above module
-            'setup_ssh',
+            'bao_setup',
             # optional name of the command in the cmdline API
-            'bao-ssh',
+            'bao-setup',
             # optional name of the command in the Python API
-            'setup_ssh'
+            'bao_setup'
         ),
     ]
 )

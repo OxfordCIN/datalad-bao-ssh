@@ -8,7 +8,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name            = "datalad-extension-bao-ssh"
+name            = "datalad-extension-bao-setup"
 dynamic         = ["version"]
 description     = "Datalad extension for setting up OpenBao signed SSH certificates"
 readme          = {file = "README.md", content-type="text/markdown"}
@@ -48,7 +48,7 @@ style = [
 ]
 
 [project.entry-points."datalad.extensions"]
-bao_ssh = "datalad_bao_ssh:command_suite"
+bao_setup = "datalad_bao_ssh:command_suite"
 
 [tool.setuptools.packages.find]
 include = ["datalad_bao_ssh*"]

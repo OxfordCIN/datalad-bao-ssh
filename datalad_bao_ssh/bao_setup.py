@@ -24,7 +24,7 @@ import requests
 import tempfile
 
 
-lgr = logging.getLogger('datalad.bao_ssh.setup_ssh')
+lgr = logging.getLogger('datalad-extension-bao-ssh.bao_setup')
 
 
 register_config(
@@ -42,7 +42,7 @@ register_config(
 # decoration auto-generates standard help
 @build_doc
 # all commands must be derived from Interface
-class setup_ssh(Interface):
+class bao_setup(Interface):
     # first docstring line is used a short description in the cmdline help
     # the rest is put in the verbose help and manpage
     """Configure SSH to use short-lived OpenBao signed SSH certificates
@@ -117,7 +117,7 @@ class setup_ssh(Interface):
         ssh_host = 'NOHOST'
         while ssh_host != '':
             ssh_host = ui.question(
-                "Enter Datalad Git server host name (hit return to end)"
+                "Enter Datalad GitLab/Hub host name (hit return to end)"
             )
             if ssh_host != '':
                 config['GIT_SSH_HOSTS'].append(ssh_host)
@@ -161,9 +161,9 @@ class setup_ssh(Interface):
             )
             config = r.json()
         except Exception:
-            config = setup_ssh.prompt_for_config()
+            config = bao_setup.prompt_for_config()
 
-        status_dict = {'action': 'setup_ssh', 'status': 'ok'}
+        status_dict = {'action': 'bao_setup', 'status': 'ok'}
         if config:
             usernames = {}
             username_servers = config['RIA_HOSTS']
@@ -195,7 +195,7 @@ class setup_ssh(Interface):
                         with open(user_ssh_exec, 'w') as usshef:
                             for line in sshef.readlines():
                                 if line == '#!/bin/bash\n':
-                                    line = f'#!{setup_ssh.shell()}\n'
+                                    line = f'#!{bao_setup.shell()}\n'
                                 else:
                                     for k, v in config.items():
                                         if k in skiplines:
@@ -222,7 +222,7 @@ class setup_ssh(Interface):
                 with open(ssh_conf_file, 'w') as sshcf:
                     for host in ssh_servers:
                         sshcf.write(
-                            setup_ssh.ssh_host_stanza(
+                            bao_setup.ssh_host_stanza(
                                 host,
                                 idfile,
                                 user_ssh_exec,

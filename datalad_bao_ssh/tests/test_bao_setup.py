@@ -7,9 +7,11 @@ import pytest
 import ssl
 import stat
 import subprocess as sp
+import sys
 import time
 import trustme
 
+from importlib.metadata import entry_points
 from pytest_httpserver import HTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,8 +19,37 @@ from unittest.mock import Mock
 from urllib.parse import urlsplit
 from werkzeug.wrappers import Response
 
-from datalad_bao_ssh.setup_ssh import setup_ssh
+from datalad_bao_ssh.bao_setup import bao_setup
+from datalad.cli.parser import setup_parser
 from datalad.support.exceptions import IncompleteResultsError
+
+
+def entrypoint_registered():
+    return any(
+        ep.name == "bao_setup"
+        for ep in entry_points(group="datalad.extensions")
+    )
+
+
+@pytest.mark.skipif(
+    not entrypoint_registered(),
+    reason="extension not installed")
+def test_version():
+    proc = sp.run(
+        ["datalad", "bao-setup", "--version"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "datalad_bao_ssh" in proc.stdout.lower()
+
+
+@pytest.mark.skipif(
+    not entrypoint_registered(),
+    reason="extension not installed")
+def test_command_visible_to_datalad():
+    parser = setup_parser(["datalad", "bao-setup"])
+    assert parser is not None
 
 
 @pytest.fixture
@@ -83,10 +114,10 @@ def ssh_environment(tmp_path, mocker):
     )
     patches = {
         "Path.home": mocker.patch(
-            "datalad_bao_ssh.setup_ssh.Path.home",
+            "datalad_bao_ssh.bao_setup.Path.home",
             return_value=Path(tmp_path)),
         "ui": mocker.patch(
-            "datalad_bao_ssh.setup_ssh.ui",
+            "datalad_bao_ssh.bao_setup.ui",
             fake_ui),
     }
 
@@ -103,7 +134,7 @@ def ssh_environment(tmp_path, mocker):
     }
 
 
-def test_setup_ssh(
+def test_bao_setup(
         httpserver: HTTPServer, requests_ca_bundle,
         ssh_environment, mocker):
     shell = ssh_environment['shell']
@@ -129,7 +160,7 @@ def test_setup_ssh(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.setup_ssh.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.get",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -139,9 +170,9 @@ def test_setup_ssh(
         ssh_environment['ria_username'],
         ssh_environment['ria_username'],
     ]
-    status = list(setup_ssh.__call__())
+    status = list(bao_setup.__call__())
     assert status == [{
-        'action': 'setup_ssh',
+        'action': 'bao_setup',
         'status': 'ok',
         'msg': 'OpenBao certificate renewals configured',
     }]
@@ -215,13 +246,13 @@ Match host git1.com exec "{exec_script}"
 
     for test_shell in ('/bin/bash', '/bin/zsh', ):
         mocker.patch(
-            "datalad_bao_ssh.setup_ssh.setup_ssh.shell",
+            "datalad_bao_ssh.bao_setup.bao_setup.shell",
             return_value=test_shell)
         ssh_environment['patches']['ui'].question.side_effect = [
             ssh_environment['ria_username'],
             ssh_environment['ria_username'],
         ]
-        status = list(setup_ssh.__call__())
+        status = list(bao_setup.__call__())
 
         with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
             with open(expected_script, 'w') as escript:
@@ -249,7 +280,7 @@ Match host git1.com exec "{exec_script}"
         assert actual_script == required_script
 
 
-def test_setup_ssh_gituser(
+def test_bao_setup_gituser(
         httpserver: HTTPServer, requests_ca_bundle,
         ssh_environment, mocker):
     shell = ssh_environment['shell']
@@ -275,7 +306,7 @@ def test_setup_ssh_gituser(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.setup_ssh.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.get",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -287,9 +318,9 @@ def test_setup_ssh_gituser(
         ssh_environment['ria_username'],
         git_username,
     ]
-    status = list(setup_ssh.__call__())
+    status = list(bao_setup.__call__())
     assert status == [{
-        'action': 'setup_ssh',
+        'action': 'bao_setup',
         'status': 'ok',
         'msg': 'OpenBao certificate renewals configured',
     }]
@@ -361,7 +392,7 @@ Match host git1.com exec "{exec_script}"
     assert actual_script == required_script
 
 
-def test_setup_ssh_existing_config(
+def test_bao_setup_existing_config(
         httpserver: HTTPServer, requests_ca_bundle,
         ssh_environment, mocker):
     baosrv = "baoserver.com"
@@ -385,7 +416,7 @@ def test_setup_ssh_existing_config(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.setup_ssh.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.get",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -401,9 +432,9 @@ Host myotherhost
     with open(ssh_config, 'w') as main_config:
         main_config.write(existing_config)
 
-    status = list(setup_ssh.__call__())
+    status = list(bao_setup.__call__())
     assert status == [{
-        'action': 'setup_ssh',
+        'action': 'bao_setup',
         'status': 'ok',
         'msg': 'OpenBao certificate renewals configured',
     }]
@@ -419,7 +450,7 @@ Host myotherhost
     assert found is True
     assert content.count(include_line) == 1
     assert content == f'{include_line}\n\n{existing_config}'
-    status = list(setup_ssh.__call__())
+    status = list(bao_setup.__call__())
     with open(ssh_config, 'r') as main_conf:
         content = main_conf.read()
     found = include_line in content
@@ -428,22 +459,22 @@ Host myotherhost
     assert content == f'{include_line}\n\n{existing_config}'
 
 
-def test_setup_ssh_bad_dns(
+def test_bao_setup_bad_dns(
         ssh_environment, requests_ca_bundle, mocker):
     shell = ssh_environment['shell']
 
     user_response = ssh_environment['user_response']
     baosrv = user_response['BAOHOST']
     mocker.patch(
-        "datalad_bao_ssh.setup_ssh.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.get",
         return_value=(
             "http://test.invalid/ssh_conf.json')}")
     )
     ssh_dir = ssh_environment['ssh_dir']
 
-    status = list(setup_ssh.__call__())
+    status = list(bao_setup.__call__())
     assert status == [{
-        'action': 'setup_ssh',
+        'action': 'bao_setup',
         'status': 'ok',
         'msg': 'OpenBao certificate renewals configured',
     }]
@@ -514,35 +545,35 @@ Match host git1.com exec "{exec_script}"
     assert actual_script == required_script
 
 
-def test_setup_ssh_user_exit(
+def test_bao_setup_user_exit(
         ssh_environment, requests_ca_bundle):
     ssh_environment['patches']['ui'].yesno.return_value = True
 
-    status = list(setup_ssh.__call__())
+    status = list(bao_setup.__call__())
 
-    assert status == [{'action': 'setup_ssh', 'status': 'ok'}]
+    assert status == [{'action': 'bao_setup', 'status': 'ok'}]
 
 
-def test_setup_ssh_permissions_issue(
+def test_bao_setup_permissions_issue(
         ssh_environment, requests_ca_bundle):
     os.chmod(ssh_environment['ssh_dir'], 0o555)
     with pytest.raises(IncompleteResultsError):
-        status = list(setup_ssh.__call__())
+        status = list(bao_setup.__call__())
         assert status['status'] == 'error'
         assert status['error_message'] == "Failed at Installing renewal script"
 
 
-def test_setup_ssh_shell_tcsh(monkeypatch, mocker):
+def test_bao_setup_shell_tcsh(monkeypatch, mocker):
     monkeypatch.setenv('SHELL', '/bin/tcsh')
     for system in (
             ('Darwin', '/bin/zsh', ),
             ('Linux', '/bin/bash', ),
             ('Another', '/bin/sh', ), ):
         mocker.patch(
-            "datalad_bao_ssh.setup_ssh.platform.system",
+            "datalad_bao_ssh.bao_setup.platform.system",
             return_value=system[0])
 
-        shell = setup_ssh.shell()
+        shell = bao_setup.shell()
         assert shell == system[1]
 
 # Testing BASH renewal script
