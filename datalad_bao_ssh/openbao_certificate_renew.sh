@@ -83,10 +83,13 @@ debug "$BAOHOST"
 debug "$BAOPORT"
 debug "$BAOAUTH"
 debug "${BAOSRV}/v1/auth/${BAOAUTH}/login/${username}"
-TOKEN=$(curl -s "${ca_opt[@]}" \
+TOKEN=$(
+  printf '%s' "$PASSWORD" |
+  jq -R '{password:.}' |
+  curl -s "${ca_opt[@]}" \
     --request POST \
     --header "Content-Type: application/json" \
-    --data "{\"password\":\"$PASSWORD\"}" \
+    --data-binary @- \
     "${BAOSRV}/v1/auth/${BAOAUTH}/login/${username}" | jq -r '.auth.client_token')
 
 if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
@@ -104,11 +107,19 @@ dl_cert_f="${tmpdir}/${CERTFILE}"
 ssh-keygen -t ed25519 -C "${username}@${BAOHOST}" \
     -f "$dl_key_f" -N "" -q
 
-SIGNED_CERT=$(curl -s "${ca_opt[@]}" \
-  --header "X-Vault-Token: $TOKEN" \
-  --request POST \
-  --data "{\"public_key\":\"$(cat "${dl_pub_f}")\", \"valid_principals\":\"${PRINCIPAL},${username}\"}" \
-  "$BAOSRV/v1/ssh-client-signer/sign/$ROLE" | jq -r '.data.signed_key')
+SIGNED_CERT=$(
+  jq -n \
+    --rawfile public_key "$dl_pub_f" \
+    --arg valid_principals "${PRINCIPAL},${username}" \
+    '{public_key:$public_key, valid_principals:$valid_principals}' |
+  curl -s "${ca_opt[@]}" \
+    --config <(
+    printf 'header = "X-Vault-Token: %s"\n' "$TOKEN"
+    printf 'url = "%s"\n' "$BAOSRV/v1/ssh-client-signer/sign/$ROLE"
+    printf 'request = "POST"\n'
+  ) \
+  --data-binary @- | \
+  jq -r '.data.signed_key')
 
 if [ "$SIGNED_CERT" = "null" ] || [ -z "$SIGNED_CERT" ]; then
   echo "Failed" >&2
