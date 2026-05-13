@@ -56,7 +56,7 @@ class setup_ssh(Interface):
     # parameters of the command, must be exhaustive
     _params_ = dict()
 
-    def shell(self):
+    def shell():
         shell = os.environ['SHELL']
         executable = os.path.basename(shell)
         if executable == 'tcsh':
@@ -70,7 +70,7 @@ class setup_ssh(Interface):
                 lgr.warning("Unrecognised OS - renewal script may not work")
         return shell
 
-    def prompt_for_config(self):
+    def prompt_for_config():
         config = {}
 
         ui.message(
@@ -125,7 +125,7 @@ class setup_ssh(Interface):
         return config
 
     def ssh_host_stanza(
-            self, host, identity_file, exec,
+            host, identity_file, exec,
             cert_ext="-cert.pub", username=None):
         '''Templates the Match statement for a SSH target that calls the
         renewal script'''
@@ -149,7 +149,7 @@ class setup_ssh(Interface):
     @eval_results
     # signature must match parameter list above
     # additional generic arguments are added by decorators
-    def __call__(self):
+    def __call__():
 
         session = requests.Session()
         lgr.info("Attempting to download configuration")
@@ -161,7 +161,7 @@ class setup_ssh(Interface):
             )
             config = r.json()
         except Exception:
-            config = self.prompt_for_config()
+            config = setup_ssh.prompt_for_config()
 
         status_dict = {'action': 'setup_ssh', 'status': 'ok'}
         if config:
@@ -185,7 +185,7 @@ class setup_ssh(Interface):
             )
             user_ssh_exec = (
                 ssh_folder
-                / f'{config['BAOHOST'].replace('.', '-')}-renew.sh')
+                / f"{config['BAOHOST'].replace('.', '-')}-renew.sh")
             skiplines = (
                 'RIA_HOSTS', 'GIT_REQUIRES_USERNAME',
                 'GIT_SSH_HOSTS', )
@@ -195,7 +195,7 @@ class setup_ssh(Interface):
                         with open(user_ssh_exec, 'w') as usshef:
                             for line in sshef.readlines():
                                 if line == '#!/bin/bash\n':
-                                    line = f'#!{self.shell()}\n'
+                                    line = f'#!{setup_ssh.shell()}\n'
                                 else:
                                     for k, v in config.items():
                                         if k in skiplines:
@@ -214,15 +214,15 @@ class setup_ssh(Interface):
                 cert_ext = '-cert.pub'
                 idfile = (
                     ssh_folder
-                    / f'id-{config['BAOHOST'].replace('.', '-')}')
+                    / f"id-{config['BAOHOST'].replace('.', '-')}")
                 ssh_conf_file = (
                     ssh_folder
-                    / f'{config['BAOHOST'].replace('.', '-')}.conf')
+                    / f"{config['BAOHOST'].replace('.', '-')}.conf")
 
                 with open(ssh_conf_file, 'w') as sshcf:
                     for host in ssh_servers:
                         sshcf.write(
-                            self.ssh_host_stanza(
+                            setup_ssh.ssh_host_stanza(
                                 host,
                                 idfile,
                                 user_ssh_exec,

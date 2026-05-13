@@ -139,8 +139,7 @@ def test_setup_ssh(
         ssh_environment['ria_username'],
         ssh_environment['ria_username'],
     ]
-    cmd = setup_ssh()
-    status = list(cmd.__call__(cmd))
+    status = list(setup_ssh.__call__())
     assert status == [{
         'action': 'setup_ssh',
         'status': 'ok',
@@ -222,7 +221,7 @@ Match host git1.com exec "{exec_script}"
             ssh_environment['ria_username'],
             ssh_environment['ria_username'],
         ]
-        status = list(cmd.__call__(cmd))
+        status = list(setup_ssh.__call__())
 
         with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
             with open(expected_script, 'w') as escript:
@@ -288,8 +287,7 @@ def test_setup_ssh_gituser(
         ssh_environment['ria_username'],
         git_username,
     ]
-    cmd = setup_ssh()
-    status = list(cmd.__call__(cmd))
+    status = list(setup_ssh.__call__())
     assert status == [{
         'action': 'setup_ssh',
         'status': 'ok',
@@ -403,8 +401,7 @@ Host myotherhost
     with open(ssh_config, 'w') as main_config:
         main_config.write(existing_config)
 
-    cmd = setup_ssh()
-    status = list(cmd.__call__(cmd))
+    status = list(setup_ssh.__call__())
     assert status == [{
         'action': 'setup_ssh',
         'status': 'ok',
@@ -422,8 +419,7 @@ Host myotherhost
     assert found is True
     assert content.count(include_line) == 1
     assert content == f'{include_line}\n\n{existing_config}'
-    cmd = setup_ssh()
-    status = list(cmd.__call__(cmd))
+    status = list(setup_ssh.__call__())
     with open(ssh_config, 'r') as main_conf:
         content = main_conf.read()
     found = include_line in content
@@ -445,8 +441,7 @@ def test_setup_ssh_bad_dns(
     )
     ssh_dir = ssh_environment['ssh_dir']
 
-    cmd = setup_ssh()
-    status = list(cmd.__call__(cmd))
+    status = list(setup_ssh.__call__())
     assert status == [{
         'action': 'setup_ssh',
         'status': 'ok',
@@ -523,8 +518,7 @@ def test_setup_ssh_user_exit(
         ssh_environment, requests_ca_bundle):
     ssh_environment['patches']['ui'].yesno.return_value = True
 
-    cmd = setup_ssh()
-    status = list(cmd.__call__(cmd))
+    status = list(setup_ssh.__call__())
 
     assert status == [{'action': 'setup_ssh', 'status': 'ok'}]
 
@@ -532,9 +526,8 @@ def test_setup_ssh_user_exit(
 def test_setup_ssh_permissions_issue(
         ssh_environment, requests_ca_bundle):
     os.chmod(ssh_environment['ssh_dir'], 0o555)
-    cmd = setup_ssh()
     with pytest.raises(IncompleteResultsError):
-        status = list(cmd.__call__(cmd))
+        status = list(setup_ssh.__call__())
         assert status['status'] == 'error'
         assert status['error_message'] == "Failed at Installing renewal script"
 
@@ -549,8 +542,7 @@ def test_setup_ssh_shell_tcsh(monkeypatch, mocker):
             "datalad_bao_ssh.setup_ssh.platform.system",
             return_value=system[0])
 
-        cmd = setup_ssh()
-        shell = cmd.shell()
+        shell = setup_ssh.shell()
         assert shell == system[1]
 
 # Testing BASH renewal script

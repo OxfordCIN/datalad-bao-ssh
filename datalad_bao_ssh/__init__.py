@@ -16,13 +16,13 @@ command_suite = (
         # specification of a command, any number of commands can be defined
         (
             # importable module that contains the command implementation
-            'datalad_bao_ssh.ssh_setup',
+            'datalad_bao_ssh.setup_ssh',
             # name of the command class implementation in above module
-            'bao_ssh',
+            'setup_ssh',
             # optional name of the command in the cmdline API
-            'ssh-setup',
+            'bao-ssh',
             # optional name of the command in the Python API
-            'ssh_setup'
+            'setup_ssh'
         ),
     ]
 )
