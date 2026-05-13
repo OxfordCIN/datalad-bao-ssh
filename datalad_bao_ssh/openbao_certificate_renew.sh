@@ -55,7 +55,7 @@ fi
 
 if [ ! -d "$HOME/.ssh" ]; then
   mkdir "$HOME/.ssh"
-  chmod 0700 "$HONE/.ssh"
+  chmod 0700 "$HOME/.ssh"
   if which restorecon >/dev/null 2>&1 ; then
     restorecon -R "$HOME/.ssh"
   fi
