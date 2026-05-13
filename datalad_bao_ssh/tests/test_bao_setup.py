@@ -7,7 +7,6 @@ import pytest
 import ssl
 import stat
 import subprocess as sp
-import sys
 import time
 import trustme
 
@@ -94,7 +93,8 @@ def ssh_environment(tmp_path, mocker):
     vpn_connect = False
     fake_ui = SimpleNamespace(
         message=Mock(),
-        yesno=Mock(return_value=False),
+        yesno=Mock(side_effect=(
+            False, user_response['GIT_REQUIRES_USERNAME'])),
         question=Mock(side_effect=[
                 user_response['ROLE'],
                 user_response['PRINCIPAL'],
@@ -102,7 +102,6 @@ def ssh_environment(tmp_path, mocker):
                 user_response["BAOHOST"],
                 user_response["BAOPORT"],
                 user_response["BAOAUTH"],
-                user_response["GIT_REQUIRES_USERNAME"],
                 user_response["RIA_HOSTS"][0],
                 user_response["RIA_HOSTS"][1],
                 "",
@@ -131,6 +130,7 @@ def ssh_environment(tmp_path, mocker):
         'vpn_connect': vpn_connect,
         'ria_username': ria_username,
         'skiplines': skiplines,
+        'principal': user_response['PRINCIPAL'],
     }
 
 
@@ -547,8 +547,7 @@ Match host git1.com exec "{exec_script}"
 
 def test_bao_setup_user_exit(
         ssh_environment, requests_ca_bundle):
-    ssh_environment['patches']['ui'].yesno.return_value = True
-
+    ssh_environment['patches']['ui'].yesno.side_effect = (True, )
     status = list(bao_setup.__call__())
 
     assert status == [{'action': 'bao_setup', 'status': 'ok'}]
@@ -652,7 +651,8 @@ def renew_certificate(
                     script.write(line)
         os.chmod(renew_scripts[shell], 0o700)
 
-    server_response = dict(config).update({
+    server_response = dict(config)
+    server_response.update({
         "GIT_REQUIRES_USERNAME": False,
         "RIA_HOSTS": [
             "ria1.com",
@@ -725,7 +725,9 @@ def make_handler(ca_key, tmp_path, token, renew_certificate, config):
         payload = json.loads(request.data.decode("utf-8"))
         public_key = payload["public_key"]
         valid_principals = payload["valid_principals"]
-
+        assert valid_principals == \
+            f"{renew_certificate['server_response']['PRINCIPAL']},{
+                renew_certificate['username']}"
         signed_key = _sign_public_key(
             ca_key=ca_key,
             public_key=public_key,
@@ -761,7 +763,10 @@ def test_renew_certificate(httpserver, tmp_path, renew_certificate):
     for shell in ['bash', 'zsh']:
         time.sleep(10)
         httpserver.expect_request(
-            f"/v1/auth/ldap/login/{renew_certificate['username']}"
+            f"/v1/auth/ldap/login/{renew_certificate['username']}",
+            method="POST",
+            json={"password": renew_certificate['password'], },
+            headers={"Content-Type": "application/json", }
         ).respond_with_json(token_response)
 
         httpserver.expect_request(

@@ -95,8 +95,6 @@ class bao_setup(Interface):
              "Port that OpenBao is listening on"),
             ("BAOAUTH", "ldap",
              "Authentication backend URL component on OpenBao server"),
-            ("GIT_REQUIRES_USERNAME", False,
-             "Does your remote git server(s) use a per-user username?")
         ]
         for opt in options:
             config[opt[0]] = ui.question(
@@ -104,6 +102,13 @@ class bao_setup(Interface):
                 default=opt[1],
                 title=opt[2]
             )
+        config['GIT_REQUIRES_USERNAME'] = ui.yesno(
+             "Does your remote git server(s) use a per-user username?"
+             " (Ordinarily GitLab/Hub server endpoints will have any"
+             " required username encoded into the repository so this"
+             " will probably be 'no')",
+             default=False)
+
         ssh_host = 'NOHOST'
         config['RIA_HOSTS'] = []
         while ssh_host != '':
@@ -153,7 +158,6 @@ class bao_setup(Interface):
 
         session = requests.Session()
         lgr.info("Attempting to download configuration")
-
         try:
             r = session.get(
                 dlcfg.get("datalad.bao-ssh-config-url"),
