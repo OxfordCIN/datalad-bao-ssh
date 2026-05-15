@@ -1,14 +1,16 @@
 #!/bin/bash
-set -uo pipefail
+set -euo pipefail
 
 DEBUG="${DATALAD_BAO_SSH_DEBUG:-0}"
 CACERT="${DATALAD_BAO_SSH_CA_CERT:-}"
-ROLE="${DATALAD_BAO_SSH_ROLE:-**ROLE**}"
-PRINCIPAL="${DATALAD_BAO_SSH_PRINCIPAL:-**PRINCIPAL**}"
-CERTTYPE="${DATALAD_BAO_SSH_CERTTYPE:-**CERTTYPE**}"
-BAOHOST="${DATALAD_BAO_SSH_BAOHOST:-**BAOHOST**}"
-BAOPORT="${DATALAD_BAO_SSH_BAOPORT:-**BAOPORT**}"
-BAOAUTH="${DATALAD_BAO_SSH_BAOAUTH:-**BAOAUTH**}"
+ROLE="**ROLE**"
+PRINCIPAL="**PRINCIPAL**"
+CERTTYPE="**CERTTYPE**"
+BAOHOST="**BAOHOST**"
+BAOPORT="**BAOPORT**"
+BAOAUTH="**BAOAUTH**"
+BAOOPENID="**BAOOPENID**"
+BAOBIN="**BAOBIN**"
 
 BAOSRV="https://${BAOHOST}:${BAOPORT}"
 KEYFILE="id-${CERTTYPE}-${BAOHOST//./-}"
@@ -38,10 +40,44 @@ error() {
     log ERROR "$*"
 }
 
+urlencode() {
+    local s="$1"
+    local out=""
+    local i c hex
+    for (( i=0; i<${#s}; i++ )); do
+        c="${s:$i:1}"
+        case "$c" in
+            [a-zA-Z0-9.~_-])
+                out+="$c"
+                ;;
+            *)
+                printf -v hex '%%%02X' "'$c"
+                out+="$hex"
+                ;;
+        esac
+    done
+    printf '%s\n' "$out"
+}
+
+remove_token() {
+  rm -f "${HOME}/.bao-token"
+}
+
+remove_tmpdir() {
+  remove_token
+  if [ -n "$tmpdir" ]; then
+    rm -rf "${tmpdir}"
+  fi
+}
+
+certificate_expiry() {
+  ssh-keygen -L -f "$CERT" \
+    | awk '/Valid:/ {print $5}'
+}
+
 if [ -f "$CERT" ]; then
   debug "Found $CERT"
-  expiry=$(ssh-keygen -L -f "$CERT" \
-    | awk '/Valid:/ {print $5}')
+  expiry=$(certificate_expiry)
   if ! epoc=$(date -d "$expiry" +%s 2>/dev/null); then
     epoc=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$expiry" +%s)
   fi
@@ -62,67 +98,93 @@ if [ ! -d "$HOME/.ssh" ]; then
 fi
 
 printf "Username: "
-read -r username
-printf "Passphrase: "
-read -r -s PASSWORD
-echo ""
+read -r raw_username
+# Look for bao command
+if command -v bao >/dev/null 2>&1 || command -v "$BAOBIN" 2>&1; then
+  VAULT_ADDR="$BAOSRV"
+  export VAULT_ADDR
+  if [ -n "$CACERT" ]; then
+    VAULT_CACERT="$CACERT"
+    export VAULT_CACERT
+  fi
+  username="$raw_username"
+else
+  BAOBIN=""
+  if [ "$BAOOPENID" = "1" ]; then
+    error "Can't find the 'bao' client necessary for logins" >&2
+    exit 1
+  fi
+  username=$(urlencode "$raw_username")
+  printf "Passphrase: "
+  read -r -s PASSWORD
+  echo ""
+fi
 
 # Attempt Bao login
-echo "Logging into access control server..."
+info "Logging into access control server..."
 if [ -n "$CACERT" ]; then
   ca_opt=(--cacert "$CACERT")
 else
   ca_opt=()
 fi
-debug "$DEBUG"
-debug "$CACERT"
-debug "$ROLE"
-debug "$PRINCIPAL"
-debug "$CERTTYPE"
-debug "$BAOHOST"
-debug "$BAOPORT"
-debug "$BAOAUTH"
-debug "${BAOSRV}/v1/auth/${BAOAUTH}/login/${username}"
-TOKEN=$(
-  printf '%s' "$PASSWORD" |
-  jq -R '{password:.}' |
-  curl -s "${ca_opt[@]}" \
-    --request POST \
-    --header "Content-Type: application/json" \
-    --data-binary @- \
-    "${BAOSRV}/v1/auth/${BAOAUTH}/login/${username}" | jq -r '.auth.client_token')
 
-if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
-  echo "Login failed" >&2
-  exit 1
+if [ -n "$BAOBIN" ]; then
+  debug "Logging in with bao with method ${BAOAUTH}"
+  "$BAOBIN" login --method="${BAOAUTH}" username="$username"
+  trap remove_token EXIT INT TERM
+else
+  debug "Logging in with cURL with method ${BAOAUTH}"
+  TOKEN=$(
+    printf '%s' "$PASSWORD" |
+    jq -R '{password:.}' |
+    curl -s "${ca_opt[@]}" \
+      --request PUT \
+      --header "X-Vault-Request: true" \
+      --data-binary @- \
+      "${BAOSRV}/v1/auth/${BAOAUTH}/login/${username}" | jq -r '.auth.client_token')
+  unset PASSWORD
+  if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+    echo "Login failed" >&2
+    exit 1
+  fi
 fi
-
-unset PASSWORD
-echo "Creating access token..."
 tmpdir=$(mktemp -d)
+trap remove_tmpdir EXIT INT TERM
 dl_key_f="${tmpdir}/${KEYFILE}"
 dl_pub_f="${tmpdir}/${PUBFILE}"
 dl_cert_f="${tmpdir}/${CERTFILE}"
 
+debug "Generating key pair"
 ssh-keygen -t ed25519 -C "${username}@${BAOHOST}" \
     -f "$dl_key_f" -N "" -q
 
-SIGNED_CERT=$(
-  jq -n \
-    --rawfile public_key "$dl_pub_f" \
-    --arg valid_principals "${PRINCIPAL},${username}" \
-    '{public_key:$public_key, valid_principals:$valid_principals}' |
-  curl -s "${ca_opt[@]}" \
-    --config <(
-    printf 'header = "X-Vault-Token: %s"\n' "$TOKEN"
-    printf 'url = "%s"\n' "$BAOSRV/v1/ssh-client-signer/sign/$ROLE"
-    printf 'request = "POST"\n'
-  ) \
-  --data-binary @- | \
-  jq -r '.data.signed_key')
+if [ -n "$BAOBIN" ]; then
+  debug "Signing certificate with bao against $ROLE"
+  SIGNED_CERT=$(
+    "$BAOBIN" write --field=signed_key "ssh-client-signer/sign/$ROLE" \
+      public_key="@$dl_pub_f" \
+      valid_principals="${PRINCIPAL},${username}"
+  )
+else
+  debug "Signing certificate with cURL against $ROLE"
+  SIGNED_CERT=$(
+    jq -n \
+      --rawfile public_key "$dl_pub_f" \
+      --arg valid_principals "${PRINCIPAL},${username}" \
+      '{public_key:$public_key, valid_principals:$valid_principals}' |
+    curl -s "${ca_opt[@]}" \
+      --config <(
+      printf 'header = "X-Vault-Token: %s"\n' "$TOKEN"
+      printf 'header = "X-Vault-Request: true"\n'
+      printf 'url = "%s"\n' "$BAOSRV/v1/ssh-client-signer/sign/$ROLE"
+      printf 'request = "PUT"\n'
+    ) \
+    --data-binary @- | \
+    jq -r '.data.signed_key')
+fi
 
 if [ "$SIGNED_CERT" = "null" ] || [ -z "$SIGNED_CERT" ]; then
-  echo "Failed" >&2
+  error "Failed to setup SSH logins"
   exit 1
 fi
 
@@ -132,4 +194,6 @@ chmod 0644 "${dl_cert_f}"
 mv "$dl_key_f" "${KEY}" && \
   mv "$dl_cert_f" "${CERT}" && \
   mv "$dl_pub_f" "${PUB}"
-rmdir "$tmpdir"
+remove_tmpdir
+
+info "SSH logins enabled until $(certificate_expiry)"

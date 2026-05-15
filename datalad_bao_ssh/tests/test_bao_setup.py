@@ -1,16 +1,21 @@
 import datetime
+import io
 import json
 import os
 import os.path
+import pexpect
 import platform
 import pytest
 import ssl
 import stat
 import subprocess as sp
+import tarfile
 import time
 import trustme
+import zipfile
 
 from importlib.metadata import entry_points
+from io import StringIO
 from pytest_httpserver import HTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +24,7 @@ from urllib.parse import urlsplit
 from werkzeug.wrappers import Response
 
 from datalad_bao_ssh.bao_setup import bao_setup
+import datalad_bao_ssh
 from datalad.cli.parser import setup_parser
 from datalad.support.exceptions import IncompleteResultsError
 
@@ -28,6 +34,254 @@ def entrypoint_registered():
         ep.name == "bao_setup"
         for ep in entry_points(group="datalad.extensions")
     )
+
+
+def make_zip(entries: dict[str, bytes]) -> zipfile.ZipFile:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w") as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)
+    buf.seek(0)
+    return zipfile.ZipFile(buf, mode="r")
+
+
+def make_tar(entries: dict[str, bytes]) -> tarfile.TarFile:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        for name, data in entries.items():
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    buf.seek(0)
+    return tarfile.open(fileobj=buf, mode="r")
+
+
+def test_safe_extract_zip_extracts_files(tmp_path: Path):
+    zip_file = make_zip({"good.txt": b"hello"})
+    outdir = tmp_path / "out"
+
+    datalad_bao_ssh.bao_setup.safe_extract_zip(zip_file, outdir)
+
+    assert (outdir / "good.txt").read_text() == "hello"
+
+
+def test_safe_extract_zip_rejects_traversal(tmp_path: Path):
+    zip_file = make_zip({"../evil.txt": b"bad"})
+    outdir = tmp_path / "out"
+
+    with pytest.raises(
+            datalad_bao_ssh.bao_setup.BaoInstallError,
+            match="Unsafe zip entry: ../evil.txt"):
+        datalad_bao_ssh.bao_setup.safe_extract_zip(zip_file, outdir)
+
+
+def test_safe_extract_tar_uses_filter_when_supported(
+        monkeypatch, tmp_path: Path):
+    class TarWithFilter:
+        def __init__(self):
+            self.called = None
+
+        def extractall(self, path, filter=None):
+            self.called = (path, filter)
+
+        def getmembers(self):
+            raise AssertionError(
+                "getmembers should not be used when filter is supported")
+
+    tar_file = TarWithFilter()
+    outdir = tmp_path / "out"
+
+    datalad_bao_ssh.bao_setup.safe_extract_tar(tar_file, outdir)
+
+    assert tar_file.called == (outdir, "data")
+
+
+def test_safe_extract_tar_fallback_extracts_files(
+        tmp_path: Path, monkeypatch):
+    extracted = {}
+
+    class FakeTar:
+        def getmembers(self):
+            return [SimpleNamespace(name="good.txt")]
+
+        def extractall(self, path):
+            extracted["path"] = path
+            (path / "good.txt").write_text("hello")
+
+    class FakeSignature:
+        parameters = {}
+
+    monkeypatch.setattr(
+        datalad_bao_ssh.bao_setup.inspect,
+        "signature",
+        lambda _func: FakeSignature()
+    )
+
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+
+    tar_file = FakeTar()
+    datalad_bao_ssh.bao_setup.safe_extract_tar(tar_file, outdir)
+
+    assert extracted["path"] == outdir
+    assert (outdir / "good.txt").read_text() == "hello"
+
+
+def test_safe_extract_tar_fallback_rejects_traversal(
+        monkeypatch, tmp_path: Path):
+    class FakeTar:
+        def __init__(self):
+            self.extractall_called = False
+
+        def getmembers(self):
+            return [SimpleNamespace(name="../evil.txt")]
+
+        def extractall(self, path):
+            self.extractall_called = True
+
+    class FakeSignature:
+        parameters = {}
+
+    monkeypatch.setattr(
+        datalad_bao_ssh.bao_setup.inspect,
+        "signature", lambda _func: FakeSignature())
+
+    tar_file = FakeTar()
+    outdir = tmp_path / "out"
+
+    with pytest.raises(
+            datalad_bao_ssh.bao_setup.BaoInstallError,
+            match="Unsafe tar entry: ../evil.txt"):
+        datalad_bao_ssh.bao_setup.safe_extract_tar(tar_file, outdir)
+
+    assert not tar_file.extractall_called
+
+
+@pytest.fixture
+def mock_github(
+        httpserver, tmp_path, monkeypatch, ca, ca_cert_path):
+    def create(
+            archive_type="tar.gz", version="1.2.4",
+            os="Linux", arch="x86_64"):
+        archive = "bao_{version}_{os}_{arch}.tar.gz"
+        sig = f"{archive}.sigstore.json"
+        url_path = '/repos/openbao/openbao/releases/latest'
+        server_response = {
+            "tag_name": f"v{version}",
+            "assets": [
+                {
+                    "name": f"{archive}",
+                    "browser_download_url": (
+                        f"{httpserver.url_for(
+                            url_path + '/' + archive)}")
+                },
+                {
+                    "name": f"{sig}",
+                    "browser_download_url": (
+                        f"{httpserver.url_for(
+                            url_path + '/' + sig)}")
+                }
+            ]
+        }
+
+        monkeypatch.setattr(
+            "datalad_bao_ssh.bao_setup.certifi.where", lambda: ca_cert_path)
+
+        httpserver.expect_request(
+            url_path).respond_with_json(
+                server_response)
+        return {
+            'archive': archive,
+            'sig': sig,
+            'url_path': url_path,
+            'url': httpserver.url_for(url_path),
+            'server_response': server_response
+        }
+    return create
+
+
+def test_bao_version(tmp_path):
+    install_dir = tmp_path
+    bao_bin = install_dir / 'bao'
+    bao_bin.write_bytes(b'''#!/bin/sh
+echo "OpenBao v1.2.3"
+''')
+    os.chmod(bao_bin, 0o755)
+    assert datalad_bao_ssh.bao_setup.bao_version(install_dir) == '1.2.3'
+
+
+def test_bao_available(mock_github):
+    gh = mock_github()
+    assert datalad_bao_ssh.bao_setup.bao_available(
+        release_url=gh['url'])['tag_name'] == 'v1.2.4'
+
+
+@pytest.fixture
+def mock_ui_message(mocker):
+    fake_ui = SimpleNamespace(
+        message=Mock(),
+    )
+    ui_patch = mocker.patch(
+            "datalad_bao_ssh.bao_setup.ui",
+            fake_ui)
+
+    return {
+        'ui': ui_patch
+    }
+
+
+def test_bad_bao(mock_bao):
+    os.chmod(str(mock_bao['script']), 0o644)
+    with pytest.raises(
+            datalad_bao_ssh.bao_setup.BaoInstallError):
+        datalad_bao_ssh.bao_setup.bao_version(
+            Path(mock_bao['script']).parent
+        )
+
+
+def test_check_for_bao_update(
+        mock_bao, mock_github, mocker,
+        mock_ui_message):
+    gh = mock_github()
+    ib = mocker.patch(
+        'datalad_bao_ssh.bao_setup.install_bao')
+    bv = mocker.patch(
+        'datalad_bao_ssh.bao_setup.bao_version',
+        return_value='1.2.3'
+    )
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.bao_available',
+        return_value=gh['server_response']
+    )
+    bao_bin = Path(mock_bao['script'])
+    assert datalad_bao_ssh.bao_setup.check_for_bao_update(
+        bao_bin.parent) == (True, "'bao' upgraded to 1.2.4", )
+    ib.assert_called_once()
+
+    bv.reset_mock()
+    ib.reset_mock()
+    bv.return_value = None
+    assert datalad_bao_ssh.bao_setup.check_for_bao_update(
+        bao_bin.parent) == (
+            False,
+            "'bao' is not installed - re-run without check"
+            " argument to install.")
+    ib.assert_not_called()
+
+    bv.reset_mock()
+    bv.return_value = '1.2.3'
+    ib.reset_mock()
+    ib.side_effect = datalad_bao_ssh.bao_setup.BaoInstallError(
+        'Install failure')
+    assert datalad_bao_ssh.bao_setup.check_for_bao_update(
+        bao_bin.parent) == (False, "Install failure", )
+
+    bv.reset_mock()
+    bv.return_value = '1.2.4'
+    ib.reset_mock()
+    ib.side_effect = None
+    assert datalad_bao_ssh.bao_setup.check_for_bao_update(
+        bao_bin.parent) == (True, "'bao' is latest version", )
 
 
 @pytest.mark.skipif(
@@ -49,6 +303,82 @@ def test_version():
 def test_command_visible_to_datalad():
     parser = setup_parser(["datalad", "bao-setup"])
     assert parser is not None
+
+
+def test_update_bao_requested(mocker):
+    sb = mocker.patch(
+        'datalad_bao_ssh.bao_setup.shutil.which',
+        return_value="/usr/bin/bao"
+    )
+    cu = mocker.patch(
+        'datalad_bao_ssh.bao_setup.check_for_bao_update',
+        return_value=(True, "updated", ))
+
+    for pfm in ("linux", "windows", ):
+        mocker.patch(
+            'datalad_bao_ssh.bao_setup.platform.system',
+            return_value=pfm)
+
+        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update_bao=True)
+        if pfm == "linux":
+            exe = 'bao'
+        else:
+            exe = 'bao.exe'
+        assert status == [{
+            'action': 'bao_setup',
+            'status': 'ok',
+            'msg': f"'{exe}' installed externally as /usr/bin/bao, ignoring",
+            }]
+
+    sb.return_value = None
+    status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update_bao=True)
+    assert status == [{
+        'action': 'bao_setup',
+        'status': 'ok',
+        'msg': "updated", }]
+
+    cu.return_value = (False, 'Failed', )
+    with pytest.raises(IncompleteResultsError):
+        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update_bao=True)
+
+        assert status == [{
+            'action': 'bao_setup',
+            'status': 'error',
+            'error_message': "Failed", }]
+
+
+@pytest.fixture
+def mock_no_bao(mocker):
+    mocker.patch(
+        "datalad_bao_ssh.bao_setup.shutil.which",
+        return_value=None)
+    mocker.patch(
+        "datalad_bao_ssh.bao_setup.install_bao",
+        side_effect=datalad_bao_ssh.bao_setup.BaoInstallError()
+    )
+
+
+@pytest.fixture
+def mock_bao(mocker, tmp_path):
+    bao_script = tmp_path / 'bao'
+    bao_script.write_bytes(b'''#!/bin/bash
+
+''')
+
+    which = mocker.patch(
+        "datalad_bao_ssh.bao_setup.shutil.which",
+        return_value=str(bao_script))
+    return {
+        'which': which,
+        'script': bao_script,
+    }
+
+
+@pytest.fixture
+def bao(tmp_path, monkeypatch):
+    bao_script = datalad_bao_ssh.bao_setup.install_bao(tmp_path)
+    monkeypatch.setenv("PATH", tmp_path, prepend=os.pathsep)
+    return bao_script
 
 
 @pytest.fixture
@@ -136,7 +466,8 @@ def ssh_environment(tmp_path, mocker):
 
 def test_bao_setup(
         httpserver: HTTPServer, requests_ca_bundle,
-        ssh_environment, mocker):
+        ssh_environment, mocker,
+        mock_no_bao):
     shell = ssh_environment['shell']
 
     baosrv = "baoserver.com"
@@ -216,7 +547,8 @@ Match host git1.com exec "{exec_script}"
 
     expected_script = ssh_environment['tmp_path'] / 'renewal_script'
     mod_dir = Path(__file__).parent.parent
-
+    server_response['BAOOPENID'] = "0"
+    server_response['BAOBIN'] = ""
     with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
         with open(expected_script, 'w') as escript:
             for line in template.readlines():
@@ -282,7 +614,8 @@ Match host git1.com exec "{exec_script}"
 
 def test_bao_setup_gituser(
         httpserver: HTTPServer, requests_ca_bundle,
-        ssh_environment, mocker):
+        ssh_environment, mocker,
+        mock_no_bao):
     shell = ssh_environment['shell']
 
     baosrv = "baoserver.com"
@@ -365,6 +698,8 @@ Match host git1.com exec "{exec_script}"
 
     expected_script = ssh_environment['tmp_path'] / 'renewal_script'
     mod_dir = Path(__file__).parent.parent
+    server_response['BAOOPENID'] = "0"
+    server_response['BAOBIN'] = ""
 
     with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
         with open(expected_script, 'w') as escript:
@@ -394,7 +729,7 @@ Match host git1.com exec "{exec_script}"
 
 def test_bao_setup_existing_config(
         httpserver: HTTPServer, requests_ca_bundle,
-        ssh_environment, mocker):
+        ssh_environment, mocker, mock_no_bao):
     baosrv = "baoserver.com"
     server_response = {
         "ROLE": "datalad-role",
@@ -460,7 +795,8 @@ Host myotherhost
 
 
 def test_bao_setup_bad_dns(
-        ssh_environment, requests_ca_bundle, mocker):
+        ssh_environment, requests_ca_bundle,
+        mocker, mock_no_bao):
     shell = ssh_environment['shell']
 
     user_response = ssh_environment['user_response']
@@ -518,6 +854,8 @@ Match host git1.com exec "{exec_script}"
 
     expected_script = ssh_environment['tmp_path'] / 'renewal_script'
     mod_dir = Path(__file__).parent.parent
+    user_response['BAOOPENID'] = "0"
+    user_response['BAOBIN'] = ""
 
     with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
         with open(expected_script, 'w') as escript:
@@ -546,7 +884,8 @@ Match host git1.com exec "{exec_script}"
 
 
 def test_bao_setup_user_exit(
-        ssh_environment, requests_ca_bundle):
+        ssh_environment, requests_ca_bundle,
+        mock_no_bao):
     ssh_environment['patches']['ui'].yesno.side_effect = (True, )
     status = list(bao_setup.__call__())
 
@@ -554,7 +893,8 @@ def test_bao_setup_user_exit(
 
 
 def test_bao_setup_permissions_issue(
-        ssh_environment, requests_ca_bundle):
+        ssh_environment, requests_ca_bundle,
+        mock_no_bao):
     os.chmod(ssh_environment['ssh_dir'], 0o555)
     with pytest.raises(IncompleteResultsError):
         status = list(bao_setup.__call__())
@@ -562,7 +902,9 @@ def test_bao_setup_permissions_issue(
         assert status['error_message'] == "Failed at Installing renewal script"
 
 
-def test_bao_setup_shell_tcsh(monkeypatch, mocker):
+def test_bao_setup_shell_tcsh(
+        monkeypatch, mocker,
+        mock_no_bao):
     monkeypatch.setenv('SHELL', '/bin/tcsh')
     for system in (
             ('Darwin', '/bin/zsh', ),
@@ -611,73 +953,79 @@ def renew_certificate(
         monkeypatch, tmp_path,
         httpserver: HTTPServer,
         requests_ca_bundle, ca_cert_path):
-    mod_dir = Path(__file__).parent.parent
-    home_dir = tmp_path
-    ca_key = _make_ca_keypair(home_dir)
-    ssh_dir = home_dir / '.ssh'
-    os.mkdir(ssh_dir)
-    os.chmod(ssh_dir, 0o700)
+    def create(openid="0", bao=""):
+        mod_dir = Path(__file__).parent.parent
+        home_dir = tmp_path
+        ca_key = _make_ca_keypair(home_dir)
+        ssh_dir = home_dir / '.ssh'
+        os.mkdir(ssh_dir)
+        os.chmod(ssh_dir, 0o700)
 
-    username = 'joebloggs'
-    password = '1234567890'
-    token = 'ABCDEFGHIJKLMNOPQRSTUVW0123456789'
+        username = 'joebloggs'
+        password = '1234567890'
+        token = 'ABCDEFGHIJKLMNOPQRSTUVW0123456789'
 
-    baourl = httpserver.url_for('')
-    split_url = urlsplit(baourl)
-    baosrv = split_url.hostname
-    baoport = str(split_url.port)
-    config = {
-        "ROLE": "datalad-role",
-        "PRINCIPAL": "dataladUsers",
-        "CERTTYPE": "ed25519",
-        "BAOHOST": baosrv,
-        "BAOPORT": baoport,
-        "BAOAUTH": "ldap",
-    }
-    renew_scripts = {
-        'bash': ssh_dir / 'openbao_certificate_renew.bash',
-        'zsh': ssh_dir / 'openbao_certificate_renew.zsh',
-    }
-    for shell in ('bash', 'zsh'):
-        with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
-            with open(renew_scripts[shell], 'w') as script:
-                for line in template.readlines():
-                    if line == '#!/bin/bash\n':
-                        line = f'#!/bin/{shell}\n'
-                    else:
-                        for k, v in config.items():
-                            if f'**{k}**' in line:
-                                line = line.replace(f'**{k}**', v)
-                    script.write(line)
-        os.chmod(renew_scripts[shell], 0o700)
+        baourl = httpserver.url_for('')
+        split_url = urlsplit(baourl)
+        baosrv = split_url.hostname
+        baoport = str(split_url.port)
+        config = {
+            "ROLE": "datalad-role",
+            "PRINCIPAL": "dataladUsers",
+            "CERTTYPE": "ed25519",
+            "BAOHOST": baosrv,
+            "BAOPORT": baoport,
+            "BAOAUTH": "ldap",
+            "BAOOPENID": openid,
+            "BAOBIN": bao,
+        }
+        renew_scripts = {
+            'bash': ssh_dir / 'openbao_certificate_renew.bash',
+            'zsh': ssh_dir / 'openbao_certificate_renew.zsh',
+        }
+        for shell in ('bash', 'zsh'):
+            with open(
+                    mod_dir / 'openbao_certificate_renew.sh',
+                    'r') as template:
+                with open(renew_scripts[shell], 'w') as script:
+                    for line in template.readlines():
+                        if line == '#!/bin/bash\n':
+                            line = f'#!/bin/{shell}\n'
+                        else:
+                            for k, v in config.items():
+                                if f'**{k}**' in line:
+                                    line = line.replace(f'**{k}**', v)
+                        script.write(line)
+            os.chmod(renew_scripts[shell], 0o700)
 
-    server_response = dict(config)
-    server_response.update({
-        "GIT_REQUIRES_USERNAME": False,
-        "RIA_HOSTS": [
-            "ria1.com",
-            "ria2.com"
-        ],
-        "GIT_SSH_HOSTS": [
-            "git1.com",
-        ]
-    })
+        server_response = dict(config)
+        server_response.update({
+            "GIT_REQUIRES_USERNAME": False,
+            "RIA_HOSTS": [
+                "ria1.com",
+                "ria2.com"
+            ],
+            "GIT_SSH_HOSTS": [
+                "git1.com",
+            ]
+        })
 
-    monkeypatch.setenv('HOME', tmp_path)
-    monkeypatch.setenv('DATALAD_BAO_SSH_CA_CERT', ca_cert_path)
-    return {
-        'home_dir': home_dir,
-        'ca_key': ca_key,
-        'ssh_dir': ssh_dir,
-        'baosrv': baosrv,
-        'config': config,
-        'renew_scripts': renew_scripts,
-        'httpserver': httpserver,
-        'username': username,
-        'password': password,
-        'token': token,
-        'server_response': server_response,
-    }
+        monkeypatch.setenv('HOME', tmp_path)
+        monkeypatch.setenv('DATALAD_BAO_SSH_CA_CERT', ca_cert_path)
+        return {
+            'home_dir': home_dir,
+            'ca_key': ca_key,
+            'ssh_dir': ssh_dir,
+            'baosrv': baosrv,
+            'config': config,
+            'renew_scripts': renew_scripts,
+            'httpserver': httpserver,
+            'username': username,
+            'password': password,
+            'token': token,
+            'server_response': server_response,
+        }
+    return create
 
 
 def _make_ca_keypair(tmp_path: Path) -> Path:
@@ -718,23 +1066,24 @@ def _sign_public_key(
     return cert_file.read_text().strip()
 
 
-def make_handler(ca_key, tmp_path, token, renew_certificate, config):
+def make_handler(ca_key, tmp_path, token, rc, config):
     def handler(request):
         assert request.headers.get("X-Vault-Token") == token
+        assert request.headers.get("X-Vault-Request") == 'true'
 
         payload = json.loads(request.data.decode("utf-8"))
         public_key = payload["public_key"]
         valid_principals = payload["valid_principals"]
         assert valid_principals == \
-            f"{renew_certificate['server_response']['PRINCIPAL']},{
-                renew_certificate['username']}"
+            f"{rc['server_response']['PRINCIPAL']},{
+                rc['username']}"
         signed_key = _sign_public_key(
             ca_key=ca_key,
             public_key=public_key,
             principals=valid_principals,
             tmp_path=tmp_path,
             validity=config['validity'],
-            id=f"ldap-{renew_certificate['username']}"
+            id=f"ldap-{rc['username']}"
         )
 
         return Response(
@@ -751,47 +1100,59 @@ def make_handler(ca_key, tmp_path, token, renew_certificate, config):
     return handler
 
 
-def test_renew_certificate(httpserver, tmp_path, renew_certificate):
-    token = renew_certificate['token']
-    ca_key = renew_certificate['ca_key']
+def test_renew_certificate(
+        httpserver, tmp_path, renew_certificate, bao):
+    rc = renew_certificate(bao=bao)
+    token = rc['token']
+    ca_key = rc['ca_key']
 
     token_response = {
         'auth': {
-            'client_token': renew_certificate['token'],
+            'client_token': rc['token'],
         }}
     config = {'validity': "+10s"}
     for shell in ['bash', 'zsh']:
         time.sleep(10)
         httpserver.expect_request(
-            f"/v1/auth/ldap/login/{renew_certificate['username']}",
-            method="POST",
-            json={"password": renew_certificate['password'], },
-            headers={"Content-Type": "application/json", }
+            f"/v1/auth/{rc['config']['BAOAUTH']}/login/{rc['username']}",
+            method="PUT",
+            json={"password": rc['password'], },
+            headers={"X-Vault-Request": "true", }
         ).respond_with_json(token_response)
 
         httpserver.expect_request(
             f"/v1/ssh-client-signer/sign/{
-                renew_certificate['config']['ROLE']}",
-            method="POST",
+                rc['config']['ROLE']}",
+            method="PUT",
         ).respond_with_handler(
             make_handler(
-                ca_key, tmp_path, token, renew_certificate,
+                ca_key, tmp_path, token, rc,
                 config))
-        output = sp.run(
-            renew_certificate['renew_scripts'][shell],
-            capture_output=True,
-            text=True,
-            input=(
-                f'{renew_certificate['username']}\n'
-                f'{renew_certificate['password']}\n'))
+        buf = StringIO()
+        child = pexpect.spawn(
+            str(rc['renew_scripts'][shell]),
+            encoding='utf-8',
+            timeout=10
+        )
+        child.logfile = buf
+        child.expect("Username: ")
+        child.sendline(rc["username"])
+        child.expect_exact("Password (will be hidden): ")
+        child.sendline(rc["password"])
+        child.expect(pexpect.EOF)
+        full_output = buf.getvalue()
+        child.close()
         now = datetime.datetime.now()
-        assert output.returncode == 0
+        if child.exitstatus != 0:
+            print(full_output)
 
-        ssh_dir = renew_certificate['ssh_dir']
+        assert child.exitstatus == 0
+
+        ssh_dir = rc['ssh_dir']
         key_file = (
             ssh_dir
-            / f'id-{renew_certificate[
-                'config']['CERTTYPE']}-{renew_certificate[
+            / f'id-{rc[
+                'config']['CERTTYPE']}-{rc[
                         'httpserver'].host.replace('.', '-')}')
         pub_file = f'{key_file}.pub'
         cert_file = f'{key_file}-cert.pub'
@@ -830,29 +1191,33 @@ def test_renew_certificate(httpserver, tmp_path, renew_certificate):
 
         assert end is not None
         assert (end - now).seconds <= 10
-        assert renew_certificate['username'] in principals
-        assert renew_certificate['config']['PRINCIPAL'] in principals
-        assert id == f"ldap-{renew_certificate['username']}"
+        assert rc['username'] in principals
+        assert rc['config']['PRINCIPAL'] in principals
+        assert id == f"ldap-{rc['username']}"
 
 
-def test_existing_certificate(httpserver, tmp_path, renew_certificate):
-    token = renew_certificate['token']
-    ca_key = renew_certificate['ca_key']
+def test_existing_certificate(
+        httpserver, tmp_path, renew_certificate, bao):
+    rc = renew_certificate(bao=bao)
+    token = rc['token']
+    ca_key = rc['ca_key']
 
     token_response = {
         'auth': {
-            'client_token': renew_certificate['token'],
+            'client_token': rc['token'],
         }}
     config = {'validity': "+10s"}
     for shell in ['bash', 'zsh']:
         httpserver.expect_request(
-            f"/v1/auth/ldap/login/{renew_certificate['username']}"
+            f"/v1/auth/ldap/login/{rc['username']}",
+            method="PUT",
+            headers={"X-Vault-Request": "true", }
         ).respond_with_json(token_response)
-        ssh_dir = renew_certificate['ssh_dir']
+        ssh_dir = rc['ssh_dir']
         key_file = (
             ssh_dir
-            / f'id-{renew_certificate[
-                'config']['CERTTYPE']}-{renew_certificate[
+            / f'id-{rc[
+                'config']['CERTTYPE']}-{rc[
                         'httpserver'].host.replace('.', '-')}')
         pub_file = f'{key_file}.pub'
         cert_file = f'{key_file}-cert.pub'
@@ -864,25 +1229,176 @@ def test_existing_certificate(httpserver, tmp_path, renew_certificate):
         config = {"validity": "+8h"}
         httpserver.expect_request(
             f"/v1/ssh-client-signer/sign/{
-                renew_certificate['config']['ROLE']}",
-            method="POST",
+                rc['config']['ROLE']}",
+            method="PUT",
         ).respond_with_handler(make_handler(
-                ca_key, tmp_path, token, renew_certificate,
+                ca_key, tmp_path, token, rc,
                 config))
-        output = sp.run(
-            renew_certificate['renew_scripts'][shell],
-            capture_output=True,
-            text=True,
-            input=(
-                f'{renew_certificate['username']}\n'
-                f'{renew_certificate['password']}\n'))
-        assert output.returncode == 0
-        assert 'Logging into access control server...' in output.stdout
+        child = pexpect.spawn(
+            str(rc['renew_scripts'][shell]),
+            encoding='utf-8',
+            timeout=10
+        )
+        output = []
+        child.expect("Username: ")
+        child.sendline(rc["username"])
+        output.append(child.before)
+        child.expect_exact("Password (will be hidden): ")
+        child.sendline(rc["password"])
+        output.append(child.before)
+        output.append(child.read())
+        child.expect(pexpect.EOF)
+        child.close()
+        assert child.exitstatus == 0
+        assert 'Logging into access control server...' in output[1]
+        assert 'Success! You are now authenticated.' in output[2]
+        assert 'SSH logins enabled until ' in output[2]
 
         output = sp.run(
-            renew_certificate['renew_scripts'][shell],
+            rc['renew_scripts'][shell],
             capture_output=True,
             text=True)
 
         assert output.returncode == 0
-        assert 'Logging into access control server...' not in output.stdout
+        assert 'Logging into access control server...' not in output.stderr
+
+
+def test_renew_certificate_curl(httpserver, tmp_path, renew_certificate):
+    rc = renew_certificate(bao="")
+    token = rc['token']
+    ca_key = rc['ca_key']
+
+    token_response = {
+        'auth': {
+            'client_token': rc['token'],
+        }}
+    config = {'validity': "+10s"}
+    for shell in ['bash', 'zsh']:
+        time.sleep(10)
+        httpserver.expect_request(
+            f"/v1/auth/ldap/login/{rc['username']}",
+            method="PUT",
+            json={"password": rc['password'], },
+            headers={"X-Vault-Request": "true", }
+        ).respond_with_json(token_response)
+
+        httpserver.expect_request(
+            f"/v1/ssh-client-signer/sign/{
+                rc['config']['ROLE']}",
+            method="PUT",
+        ).respond_with_handler(
+            make_handler(
+                ca_key, tmp_path, token, rc,
+                config))
+        output = sp.run(
+            rc['renew_scripts'][shell],
+            capture_output=True,
+            text=True,
+            input=(
+                f'{rc['username']}\n'
+                f'{rc['password']}\n'))
+        now = datetime.datetime.now()
+        assert output.returncode == 0
+
+        ssh_dir = rc['ssh_dir']
+        key_file = (
+            ssh_dir
+            / f'id-{rc[
+                'config']['CERTTYPE']}-{rc[
+                        'httpserver'].host.replace('.', '-')}')
+        pub_file = f'{key_file}.pub'
+        cert_file = f'{key_file}-cert.pub'
+        for sshfile in (key_file, pub_file, cert_file):
+            assert os.path.exists(sshfile)
+
+        exp_out = sp.run(
+            ['ssh-keygen', '-L', '-f', cert_file],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        end = None
+        principals = []
+        id = None
+        in_principals = False
+        for line in exp_out.stdout.splitlines():
+            line = line.strip()
+            if line.startswith('Valid: '):
+                end = datetime.datetime.strptime(
+                    line.split(' ')[4],
+                    '%Y-%m-%dT%H:%M:%S'
+                )
+                continue
+            if line.startswith('Key ID: '):
+                id = line.split(' ')[2].strip('"')
+                continue
+            if line.startswith('Principals:'):
+                in_principals = True
+                continue
+            if line.startswith('Critical Options'):
+                in_principals = False
+                continue
+            if in_principals:
+                principals.append(line)
+
+        assert end is not None
+        assert (end - now).seconds <= 10
+        assert rc['username'] in principals
+        assert rc['config']['PRINCIPAL'] in principals
+        assert id == f"ldap-{rc['username']}"
+
+
+def test_existing_certificate_curl(httpserver, tmp_path, renew_certificate):
+    rc = renew_certificate(bao="")
+    token = rc['token']
+    ca_key = rc['ca_key']
+
+    token_response = {
+        'auth': {
+            'client_token': rc['token'],
+        }}
+    config = {'validity': "+10s"}
+    for shell in ['bash', 'zsh']:
+        httpserver.expect_request(
+            f"/v1/auth/ldap/login/{rc['username']}",
+            headers={"X-Vault-Request": "true", },
+            method="PUT"
+        ).respond_with_json(token_response)
+        ssh_dir = rc['ssh_dir']
+        key_file = (
+            ssh_dir
+            / f'id-{rc[
+                'config']['CERTTYPE']}-{rc[
+                        'httpserver'].host.replace('.', '-')}')
+        pub_file = f'{key_file}.pub'
+        cert_file = f'{key_file}-cert.pub'
+        for sshfile in (key_file, pub_file, cert_file):
+            try:
+                os.unlink(sshfile)
+            except Exception:
+                pass
+        config = {"validity": "+8h"}
+        httpserver.expect_request(
+            f"/v1/ssh-client-signer/sign/{
+                rc['config']['ROLE']}",
+            method="PUT",
+        ).respond_with_handler(make_handler(
+                ca_key, tmp_path, token, rc,
+                config))
+        output = sp.run(
+            rc['renew_scripts'][shell],
+            capture_output=True,
+            text=True,
+            input=(
+                f'{rc['username']}\n'
+                f'{rc['password']}\n'))
+        assert output.returncode == 0
+        assert 'Logging into access control server...' in output.stderr
+
+        output = sp.run(
+            rc['renew_scripts'][shell],
+            capture_output=True,
+            text=True)
+
+        assert output.returncode == 0
+        assert 'Logging into access control server...' not in output.stderr

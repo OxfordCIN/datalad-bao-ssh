@@ -5,4 +5,4 @@ High-level API commands
 .. autosummary::
    :toctree: generated
 
-   setup_ssh
+   bao_setup
