@@ -278,6 +278,100 @@ def install_bao(install_dir, release=bao_available()):
     return str(bao_binary)
 
 
+def shell():
+    shell = os.environ['SHELL']
+    executable = os.path.basename(shell)
+    if executable == 'tcsh':
+        system = platform.system()
+        if system == 'Darwin':
+            shell = '/bin/zsh'
+        elif system == 'Linux':
+            shell = '/bin/bash'
+        else:
+            shell = '/bin/sh'
+            lgr.warning("Unrecognised OS - renewal script may not work")
+    return shell
+
+
+def prompt_for_config():
+    config = {}
+
+    ui.message(
+        "The configuration server was not contactable."
+    )
+    if ui.yesno(
+            "Would you like to quit so that you can connect to a VPN "
+            "and try again?",
+            default=False
+            ):
+        return config
+    options = [
+        ("ROLE", "datalad-role",
+            "OpenBao role that allows signing of SSH certificates"),
+        ("PRINCIPAL", "dataladUsers",
+            "OpenBao 'principal' that identifies users of Datalad"),
+        ("CERTTYPE", "ed25519",
+            "SSH certificate type to generate"),
+        ("BAOHOST", "",
+            "Hostname of the OpenBao authentication server"),
+        ("BAOPORT", "8200",
+            "Port that OpenBao is listening on"),
+        ("BAOAUTH", "ldap",
+            "Authentication backend URL component on OpenBao server"),
+    ]
+    for opt in options:
+        config[opt[0]] = ui.question(
+            opt[0],
+            default=opt[1],
+            title=opt[2]
+        )
+    config['GIT_REQUIRES_USERNAME'] = ui.yesno(
+            "Does your remote git server(s) use a per-user username?"
+            " (Ordinarily GitLab/Hub server endpoints will have any"
+            " required username encoded into the repository so this"
+            " will probably be 'no')",
+            default=False)
+
+    ssh_host = 'NOHOST'
+    config['RIA_HOSTS'] = []
+    while ssh_host != '':
+        ssh_host = ui.question(
+            "Enter Datalad RIA endpoint host name (hit return to end)"
+        )
+        if ssh_host != '':
+            config['RIA_HOSTS'].append(ssh_host)
+
+    config['GIT_SSH_HOSTS'] = []
+    ssh_host = 'NOHOST'
+    while ssh_host != '':
+        ssh_host = ui.question(
+            "Enter Datalad GitLab/Hub host name (hit return to end)"
+        )
+        if ssh_host != '':
+            config['GIT_SSH_HOSTS'].append(ssh_host)
+
+    return config
+
+
+def ssh_host_stanza(
+        host, identity_file, exec,
+        cert_ext="-cert.pub", username=None):
+    '''Templates the Match statement for a SSH target that calls the
+    renewal script'''
+
+    template = f'''Match host {host} exec "{exec}"
+    IdentitiesOnly yes
+    IdentityFile "{identity_file}"
+    CertificateFile "{identity_file}{cert_ext}"
+'''
+    if username is not None:
+        template += f'    User "{username}"\n\n'
+    else:
+        template += '\n'
+
+    return template
+
+
 # decoration auto-generates standard help
 @build_doc
 # all commands must be derived from Interface
@@ -300,97 +394,6 @@ class bao_setup(Interface):
             action="store_true",
         ),
     )
-
-    def shell():
-        shell = os.environ['SHELL']
-        executable = os.path.basename(shell)
-        if executable == 'tcsh':
-            system = platform.system()
-            if system == 'Darwin':
-                shell = '/bin/zsh'
-            elif system == 'Linux':
-                shell = '/bin/bash'
-            else:
-                shell = '/bin/sh'
-                lgr.warning("Unrecognised OS - renewal script may not work")
-        return shell
-
-    def prompt_for_config():
-        config = {}
-
-        ui.message(
-            "The configuration server was not contactable."
-        )
-        if ui.yesno(
-                "Would you like to quit so that you can connect to a VPN "
-                "and try again?",
-                default=False
-                ):
-            return config
-        options = [
-            ("ROLE", "datalad-role",
-             "OpenBao role that allows signing of SSH certificates"),
-            ("PRINCIPAL", "dataladUsers",
-             "OpenBao 'principal' that identifies users of Datalad"),
-            ("CERTTYPE", "ed25519",
-             "SSH certificate type to generate"),
-            ("BAOHOST", "",
-             "Hostname of the OpenBao authentication server"),
-            ("BAOPORT", "8200",
-             "Port that OpenBao is listening on"),
-            ("BAOAUTH", "ldap",
-             "Authentication backend URL component on OpenBao server"),
-        ]
-        for opt in options:
-            config[opt[0]] = ui.question(
-                opt[0],
-                default=opt[1],
-                title=opt[2]
-            )
-        config['GIT_REQUIRES_USERNAME'] = ui.yesno(
-             "Does your remote git server(s) use a per-user username?"
-             " (Ordinarily GitLab/Hub server endpoints will have any"
-             " required username encoded into the repository so this"
-             " will probably be 'no')",
-             default=False)
-
-        ssh_host = 'NOHOST'
-        config['RIA_HOSTS'] = []
-        while ssh_host != '':
-            ssh_host = ui.question(
-                "Enter Datalad RIA endpoint host name (hit return to end)"
-            )
-            if ssh_host != '':
-                config['RIA_HOSTS'].append(ssh_host)
-
-        config['GIT_SSH_HOSTS'] = []
-        ssh_host = 'NOHOST'
-        while ssh_host != '':
-            ssh_host = ui.question(
-                "Enter Datalad GitLab/Hub host name (hit return to end)"
-            )
-            if ssh_host != '':
-                config['GIT_SSH_HOSTS'].append(ssh_host)
-
-        return config
-
-    def ssh_host_stanza(
-            host, identity_file, exec,
-            cert_ext="-cert.pub", username=None):
-        '''Templates the Match statement for a SSH target that calls the
-        renewal script'''
-
-        template = f'''Match host {host} exec "{exec}"
-    IdentitiesOnly yes
-    IdentityFile "{identity_file}"
-    CertificateFile "{identity_file}{cert_ext}"
-'''
-        if username is not None:
-            template += f'    User "{username}"\n\n'
-        else:
-            template += '\n'
-
-        return template
 
     @staticmethod
     # decorator binds the command to the Dataset class as a method
@@ -437,7 +440,7 @@ class bao_setup(Interface):
                 )
                 config = r.json()
             except Exception:
-                config = bao_setup.prompt_for_config()
+                config = prompt_for_config()
 
             # The following is a list of OpenBao methods that use external
             # services to collect the password
@@ -480,7 +483,7 @@ class bao_setup(Interface):
                             with open(user_ssh_exec, 'w') as usshef:
                                 for line in sshef.readlines():
                                     if line == '#!/bin/bash\n':
-                                        line = f'#!{bao_setup.shell()}\n'
+                                        line = f'#!{shell()}\n'
                                     else:
                                         for k, v in config.items():
                                             if k in skiplines:
@@ -507,7 +510,7 @@ class bao_setup(Interface):
                     with open(ssh_conf_file, 'w') as sshcf:
                         for host in ssh_servers:
                             sshcf.write(
-                                bao_setup.ssh_host_stanza(
+                                ssh_host_stanza(
                                     host,
                                     idfile,
                                     user_ssh_exec,

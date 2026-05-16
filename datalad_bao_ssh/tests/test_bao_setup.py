@@ -578,7 +578,7 @@ Match host git1.com exec "{exec_script}"
 
     for test_shell in ('/bin/bash', '/bin/zsh', ):
         mocker.patch(
-            "datalad_bao_ssh.bao_setup.bao_setup.shell",
+            "datalad_bao_ssh.bao_setup.shell",
             return_value=test_shell)
         ssh_environment['patches']['ui'].question.side_effect = [
             ssh_environment['ria_username'],
@@ -914,7 +914,7 @@ def test_bao_setup_shell_tcsh(
             "datalad_bao_ssh.bao_setup.platform.system",
             return_value=system[0])
 
-        shell = bao_setup.shell()
+        shell = datalad_bao_ssh.bao_setup.shell()
         assert shell == system[1]
 
 # Testing BASH renewal script
