@@ -29,6 +29,291 @@ from datalad.cli.parser import setup_parser
 from datalad.support.exceptions import IncompleteResultsError
 
 
+# Session level fixtures
+
+@pytest.fixture(scope="session")
+def ca():
+    return trustme.CA()
+
+
+@pytest.fixture(scope="session")
+def httpserver_ssl_context(ca):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    localhost_cert = ca.issue_cert("localhost")
+    localhost_cert.configure_cert(context)
+    return context
+
+
+@pytest.fixture(scope="session")
+def ca_cert_path(ca):
+    with ca.cert_pem.tempfile() as path:
+        yield path
+
+
+# Test level fixtures
+@pytest.fixture
+def requests_ca_bundle(monkeypatch, ca):
+    monkeypatch.setenv("DATALAD_BAO_SSH_CA_CERT", ca)
+    monkeypatch.setenv("DATALAD_BAO_SSH_DEBUG", "1")
+    with ca.cert_pem.tempfile() as ca_pem:
+        monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(ca_pem))
+        yield str(ca_pem)
+
+
+@pytest.fixture
+def bao(tmp_path, monkeypatch):
+    bao_script = datalad_bao_ssh.bao_setup.install_bao(tmp_path)
+    monkeypatch.setenv("PATH", tmp_path, prepend=os.pathsep)
+    return bao_script
+
+
+@pytest.fixture
+def mock_bao(mocker, tmp_path):
+    bao_script = tmp_path / 'bao'
+    bao_script.write_bytes(b'''#!/bin/bash
+
+''')
+
+    which = mocker.patch(
+        "datalad_bao_ssh.bao_setup.shutil.which",
+        return_value=str(bao_script))
+    return {
+        'which': which,
+        'script': bao_script,
+    }
+
+
+@pytest.fixture
+def mock_no_bao(mocker):
+    mocker.patch(
+        "datalad_bao_ssh.bao_setup.shutil.which",
+        return_value=None)
+    mocker.patch(
+        "datalad_bao_ssh.bao_setup.install_bao",
+        side_effect=datalad_bao_ssh.bao_setup.BaoInstallError()
+    )
+
+
+@pytest.fixture
+def mock_ui_message(mocker):
+    fake_ui = SimpleNamespace(
+        message=Mock(),
+    )
+    ui_patch = mocker.patch(
+            "datalad_bao_ssh.bao_setup.ui",
+            fake_ui)
+
+    return {
+        'ui': ui_patch
+    }
+
+
+@pytest.fixture
+def renew_certificate(
+        monkeypatch, tmp_path,
+        httpserver: HTTPServer,
+        requests_ca_bundle, ca_cert_path):
+    def create(openid="0", bao=""):
+        mod_dir = Path(__file__).parent.parent
+        home_dir = tmp_path
+        ca_key = _make_ca_keypair(home_dir)
+        ssh_dir = home_dir / '.ssh'
+        os.mkdir(ssh_dir)
+        os.chmod(ssh_dir, 0o700)
+
+        username = 'joebloggs'
+        password = '1234567890'
+        token = 'ABCDEFGHIJKLMNOPQRSTUVW0123456789'
+
+        baourl = httpserver.url_for('')
+        split_url = urlsplit(baourl)
+        baosrv = split_url.hostname
+        baoport = str(split_url.port)
+        config = {
+            "ROLE": "datalad-role",
+            "PRINCIPAL": "dataladUsers",
+            "CERTTYPE": "ed25519",
+            "BAOHOST": baosrv,
+            "BAOPORT": baoport,
+            "BAOAUTH": "ldap",
+            "BAOOPENID": openid,
+            "BAOBIN": bao,
+        }
+        renew_scripts = {
+            'bash': ssh_dir / 'openbao_certificate_renew.bash',
+            'zsh': ssh_dir / 'openbao_certificate_renew.zsh',
+        }
+        for shell in ('bash', 'zsh'):
+            with open(
+                    mod_dir / 'openbao_certificate_renew.sh',
+                    'r') as template:
+                with open(renew_scripts[shell], 'w') as script:
+                    for line in template.readlines():
+                        if line == '#!/bin/bash\n':
+                            line = f'#!/bin/{shell}\n'
+                        else:
+                            for k, v in config.items():
+                                if f'**{k}**' in line:
+                                    line = line.replace(f'**{k}**', v)
+                        script.write(line)
+            os.chmod(renew_scripts[shell], 0o700)
+
+        server_response = dict(config)
+        server_response.update({
+            "GIT_REQUIRES_USERNAME": False,
+            "RIA_HOSTS": [
+                "ria1.com",
+                "ria2.com"
+            ],
+            "GIT_SSH_HOSTS": [
+                "git1.com",
+            ]
+        })
+
+        monkeypatch.setenv('HOME', tmp_path)
+        monkeypatch.setenv('DATALAD_BAO_SSH_CA_CERT', ca_cert_path)
+        return {
+            'home_dir': home_dir,
+            'ca_key': ca_key,
+            'ssh_dir': ssh_dir,
+            'baosrv': baosrv,
+            'config': config,
+            'renew_scripts': renew_scripts,
+            'httpserver': httpserver,
+            'username': username,
+            'password': password,
+            'token': token,
+            'server_response': server_response,
+        }
+    return create
+
+
+@pytest.fixture
+def ssh_environment(tmp_path, mocker):
+    shell = os.environ['SHELL']
+    executable = os.path.basename(shell)
+    if executable == 'tcsh':
+        system = platform.system()
+        if system == 'Darwin':
+            shell = '/bin/zsh'
+        elif system == 'Linux':
+            shell = '/bin/bash'
+        else:
+            shell = '/bin/sh'
+
+    ria_username = 'joebloggs'
+    ssh_dir = tmp_path / '.ssh'
+    ssh_config = ssh_dir / 'config'
+    os.mkdir(ssh_dir)
+    with open(ssh_config, 'w') as empty_conf:
+        empty_conf.write('\n')
+
+    user_response = {
+        "ROLE": "sshuser-role",
+        "PRINCIPAL": "sshUsers",
+        "CERTTYPE": "rsa",
+        "BAOHOST": "baoserver.co.uk",
+        "BAOPORT": "8200",
+        "BAOAUTH": "ldap",
+        "GIT_REQUIRES_USERNAME": False,
+        "GIT_SSH_HOSTS": [
+            'git1.com'
+        ],
+        "RIA_HOSTS": [
+            "ria3.com",
+            "ria4.com"
+        ]
+    }
+    skiplines = (
+                'RIA_HOSTS', 'GIT_REQUIRES_USERNAME',
+                'GIT_SSH_HOSTS', )
+    vpn_connect = False
+    fake_ui = SimpleNamespace(
+        message=Mock(),
+        yesno=Mock(side_effect=(
+            False, user_response['GIT_REQUIRES_USERNAME'])),
+        question=Mock(side_effect=[
+                user_response['ROLE'],
+                user_response['PRINCIPAL'],
+                user_response["CERTTYPE"],
+                user_response["BAOHOST"],
+                user_response["BAOPORT"],
+                user_response["BAOAUTH"],
+                user_response["RIA_HOSTS"][0],
+                user_response["RIA_HOSTS"][1],
+                "",
+                user_response['GIT_SSH_HOSTS'][0],
+                "",
+                ria_username,
+                ria_username,
+            ])
+    )
+    patches = {
+        "Path.home": mocker.patch(
+            "datalad_bao_ssh.bao_setup.Path.home",
+            return_value=Path(tmp_path)),
+        "ui": mocker.patch(
+            "datalad_bao_ssh.bao_setup.ui",
+            fake_ui),
+    }
+
+    return {
+        'shell': shell,
+        'patches': patches,
+        'ssh_dir': ssh_dir,
+        'tmp_path': tmp_path,
+        'user_response': user_response,
+        'ssh_config': ssh_config,
+        'vpn_connect': vpn_connect,
+        'ria_username': ria_username,
+        'skiplines': skiplines,
+        'principal': user_response['PRINCIPAL'],
+    }
+
+
+@pytest.fixture
+def mock_github(
+        httpserver, tmp_path, monkeypatch, ca, ca_cert_path):
+    def create(
+            archive_type="tar.gz", version="1.2.4",
+            os="Linux", arch="x86_64"):
+        archive = "bao_{version}_{os}_{arch}.tar.gz"
+        sig = f"{archive}.sigstore.json"
+        url_path = '/repos/openbao/openbao/releases/latest'
+        server_response = {
+            "tag_name": f"v{version}",
+            "assets": [
+                {
+                    "name": f"{archive}",
+                    "browser_download_url": (
+                        f"{httpserver.url_for(
+                            url_path + '/' + archive)}")
+                },
+                {
+                    "name": f"{sig}",
+                    "browser_download_url": (
+                        f"{httpserver.url_for(
+                            url_path + '/' + sig)}")
+                }
+            ]
+        }
+
+        monkeypatch.setattr(
+            "datalad_bao_ssh.bao_setup.certifi.where", lambda: ca_cert_path)
+
+        httpserver.expect_request(
+            url_path).respond_with_json(
+                server_response)
+        return {
+            'archive': archive,
+            'sig': sig,
+            'url_path': url_path,
+            'url': httpserver.url_for(url_path),
+            'server_response': server_response
+        }
+    return create
+
+
 def entrypoint_registered():
     return any(
         ep.name == "bao_setup"
@@ -157,49 +442,6 @@ def test_safe_extract_tar_fallback_rejects_traversal(
     assert not tar_file.extractall_called
 
 
-@pytest.fixture
-def mock_github(
-        httpserver, tmp_path, monkeypatch, ca, ca_cert_path):
-    def create(
-            archive_type="tar.gz", version="1.2.4",
-            os="Linux", arch="x86_64"):
-        archive = "bao_{version}_{os}_{arch}.tar.gz"
-        sig = f"{archive}.sigstore.json"
-        url_path = '/repos/openbao/openbao/releases/latest'
-        server_response = {
-            "tag_name": f"v{version}",
-            "assets": [
-                {
-                    "name": f"{archive}",
-                    "browser_download_url": (
-                        f"{httpserver.url_for(
-                            url_path + '/' + archive)}")
-                },
-                {
-                    "name": f"{sig}",
-                    "browser_download_url": (
-                        f"{httpserver.url_for(
-                            url_path + '/' + sig)}")
-                }
-            ]
-        }
-
-        monkeypatch.setattr(
-            "datalad_bao_ssh.bao_setup.certifi.where", lambda: ca_cert_path)
-
-        httpserver.expect_request(
-            url_path).respond_with_json(
-                server_response)
-        return {
-            'archive': archive,
-            'sig': sig,
-            'url_path': url_path,
-            'url': httpserver.url_for(url_path),
-            'server_response': server_response
-        }
-    return create
-
-
 def test_bao_version(tmp_path):
     install_dir = tmp_path
     bao_bin = install_dir / 'bao'
@@ -214,20 +456,6 @@ def test_bao_available(mock_github):
     gh = mock_github()
     assert datalad_bao_ssh.bao_setup.bao_available(
         release_url=gh['url'])['tag_name'] == 'v1.2.4'
-
-
-@pytest.fixture
-def mock_ui_message(mocker):
-    fake_ui = SimpleNamespace(
-        message=Mock(),
-    )
-    ui_patch = mocker.patch(
-            "datalad_bao_ssh.bao_setup.ui",
-            fake_ui)
-
-    return {
-        'ui': ui_patch
-    }
 
 
 def test_bad_bao(mock_bao):
@@ -345,123 +573,6 @@ def test_update_bao_requested(mocker):
             'action': 'bao_setup',
             'status': 'error',
             'error_message': "Failed", }]
-
-
-@pytest.fixture
-def mock_no_bao(mocker):
-    mocker.patch(
-        "datalad_bao_ssh.bao_setup.shutil.which",
-        return_value=None)
-    mocker.patch(
-        "datalad_bao_ssh.bao_setup.install_bao",
-        side_effect=datalad_bao_ssh.bao_setup.BaoInstallError()
-    )
-
-
-@pytest.fixture
-def mock_bao(mocker, tmp_path):
-    bao_script = tmp_path / 'bao'
-    bao_script.write_bytes(b'''#!/bin/bash
-
-''')
-
-    which = mocker.patch(
-        "datalad_bao_ssh.bao_setup.shutil.which",
-        return_value=str(bao_script))
-    return {
-        'which': which,
-        'script': bao_script,
-    }
-
-
-@pytest.fixture
-def bao(tmp_path, monkeypatch):
-    bao_script = datalad_bao_ssh.bao_setup.install_bao(tmp_path)
-    monkeypatch.setenv("PATH", tmp_path, prepend=os.pathsep)
-    return bao_script
-
-
-@pytest.fixture
-def ssh_environment(tmp_path, mocker):
-    shell = os.environ['SHELL']
-    executable = os.path.basename(shell)
-    if executable == 'tcsh':
-        system = platform.system()
-        if system == 'Darwin':
-            shell = '/bin/zsh'
-        elif system == 'Linux':
-            shell = '/bin/bash'
-        else:
-            shell = '/bin/sh'
-
-    ria_username = 'joebloggs'
-    ssh_dir = tmp_path / '.ssh'
-    ssh_config = ssh_dir / 'config'
-    os.mkdir(ssh_dir)
-    with open(ssh_config, 'w') as empty_conf:
-        empty_conf.write('\n')
-
-    user_response = {
-        "ROLE": "sshuser-role",
-        "PRINCIPAL": "sshUsers",
-        "CERTTYPE": "rsa",
-        "BAOHOST": "baoserver.co.uk",
-        "BAOPORT": "8200",
-        "BAOAUTH": "ldap",
-        "GIT_REQUIRES_USERNAME": False,
-        "GIT_SSH_HOSTS": [
-            'git1.com'
-        ],
-        "RIA_HOSTS": [
-            "ria3.com",
-            "ria4.com"
-        ]
-    }
-    skiplines = (
-                'RIA_HOSTS', 'GIT_REQUIRES_USERNAME',
-                'GIT_SSH_HOSTS', )
-    vpn_connect = False
-    fake_ui = SimpleNamespace(
-        message=Mock(),
-        yesno=Mock(side_effect=(
-            False, user_response['GIT_REQUIRES_USERNAME'])),
-        question=Mock(side_effect=[
-                user_response['ROLE'],
-                user_response['PRINCIPAL'],
-                user_response["CERTTYPE"],
-                user_response["BAOHOST"],
-                user_response["BAOPORT"],
-                user_response["BAOAUTH"],
-                user_response["RIA_HOSTS"][0],
-                user_response["RIA_HOSTS"][1],
-                "",
-                user_response['GIT_SSH_HOSTS'][0],
-                "",
-                ria_username,
-                ria_username,
-            ])
-    )
-    patches = {
-        "Path.home": mocker.patch(
-            "datalad_bao_ssh.bao_setup.Path.home",
-            return_value=Path(tmp_path)),
-        "ui": mocker.patch(
-            "datalad_bao_ssh.bao_setup.ui",
-            fake_ui),
-    }
-
-    return {
-        'shell': shell,
-        'patches': patches,
-        'ssh_dir': ssh_dir,
-        'tmp_path': tmp_path,
-        'user_response': user_response,
-        'ssh_config': ssh_config,
-        'vpn_connect': vpn_connect,
-        'ria_username': ria_username,
-        'skiplines': skiplines,
-        'principal': user_response['PRINCIPAL'],
-    }
 
 
 def test_bao_setup(
@@ -918,114 +1029,6 @@ def test_bao_setup_shell_tcsh(
         assert shell == system[1]
 
 # Testing BASH renewal script
-
-
-@pytest.fixture(scope="session")
-def ca():
-    return trustme.CA()
-
-
-@pytest.fixture(scope="session")
-def httpserver_ssl_context(ca):
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    localhost_cert = ca.issue_cert("localhost")
-    localhost_cert.configure_cert(context)
-    return context
-
-
-@pytest.fixture(scope="session")
-def ca_cert_path(ca):
-    with ca.cert_pem.tempfile() as path:
-        yield path
-
-
-@pytest.fixture
-def requests_ca_bundle(monkeypatch, ca):
-    monkeypatch.setenv("DATALAD_BAO_SSH_CA_CERT", ca)
-    monkeypatch.setenv("DATALAD_BAO_SSH_DEBUG", "1")
-    with ca.cert_pem.tempfile() as ca_pem:
-        monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(ca_pem))
-        yield str(ca_pem)
-
-
-@pytest.fixture
-def renew_certificate(
-        monkeypatch, tmp_path,
-        httpserver: HTTPServer,
-        requests_ca_bundle, ca_cert_path):
-    def create(openid="0", bao=""):
-        mod_dir = Path(__file__).parent.parent
-        home_dir = tmp_path
-        ca_key = _make_ca_keypair(home_dir)
-        ssh_dir = home_dir / '.ssh'
-        os.mkdir(ssh_dir)
-        os.chmod(ssh_dir, 0o700)
-
-        username = 'joebloggs'
-        password = '1234567890'
-        token = 'ABCDEFGHIJKLMNOPQRSTUVW0123456789'
-
-        baourl = httpserver.url_for('')
-        split_url = urlsplit(baourl)
-        baosrv = split_url.hostname
-        baoport = str(split_url.port)
-        config = {
-            "ROLE": "datalad-role",
-            "PRINCIPAL": "dataladUsers",
-            "CERTTYPE": "ed25519",
-            "BAOHOST": baosrv,
-            "BAOPORT": baoport,
-            "BAOAUTH": "ldap",
-            "BAOOPENID": openid,
-            "BAOBIN": bao,
-        }
-        renew_scripts = {
-            'bash': ssh_dir / 'openbao_certificate_renew.bash',
-            'zsh': ssh_dir / 'openbao_certificate_renew.zsh',
-        }
-        for shell in ('bash', 'zsh'):
-            with open(
-                    mod_dir / 'openbao_certificate_renew.sh',
-                    'r') as template:
-                with open(renew_scripts[shell], 'w') as script:
-                    for line in template.readlines():
-                        if line == '#!/bin/bash\n':
-                            line = f'#!/bin/{shell}\n'
-                        else:
-                            for k, v in config.items():
-                                if f'**{k}**' in line:
-                                    line = line.replace(f'**{k}**', v)
-                        script.write(line)
-            os.chmod(renew_scripts[shell], 0o700)
-
-        server_response = dict(config)
-        server_response.update({
-            "GIT_REQUIRES_USERNAME": False,
-            "RIA_HOSTS": [
-                "ria1.com",
-                "ria2.com"
-            ],
-            "GIT_SSH_HOSTS": [
-                "git1.com",
-            ]
-        })
-
-        monkeypatch.setenv('HOME', tmp_path)
-        monkeypatch.setenv('DATALAD_BAO_SSH_CA_CERT', ca_cert_path)
-        return {
-            'home_dir': home_dir,
-            'ca_key': ca_key,
-            'ssh_dir': ssh_dir,
-            'baosrv': baosrv,
-            'config': config,
-            'renew_scripts': renew_scripts,
-            'httpserver': httpserver,
-            'username': username,
-            'password': password,
-            'token': token,
-            'server_response': server_response,
-        }
-    return create
 
 
 def _make_ca_keypair(tmp_path: Path) -> Path:

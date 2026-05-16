@@ -167,11 +167,11 @@ def install_bao(install_dir, release=bao_available()):
         raise BaoInstallError(f"Unrecognised architecture {machine}")
 
     if system == "linux":
-        fnend = f"linux_{arch}.tar.gz"
+        fnend = f"_linux_{arch}.tar.gz"
     elif system == "darwin":
-        fnend = f"darwin_{arch}.tar.gz"
+        fnend = f"_darwin_{arch}.tar.gz"
     elif system == "windows":
-        fnend = f"windows_{arch}.zip"
+        fnend = f"_windows_{arch}.zip"
     else:
         raise BaoInstallError(f"Unsupported OS: {system}")
 
