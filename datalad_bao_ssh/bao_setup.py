@@ -160,7 +160,7 @@ def install_bao(install_dir, release=bao_available()):
     system = platform.system().lower()
     machine = platform.machine().lower()
     if machine in ("x86_64", "amd64"):
-        arch = "amd64"
+        arch = "x86_64"
     elif machine in ("aarch64", "arm64"):
         arch = "arm64"
     else:
@@ -180,12 +180,12 @@ def install_bao(install_dir, release=bao_available()):
     for a in release["assets"]:
         name = a["name"].lower()
         if name.lower().endswith(fnend):
-            asset = a
+            asset = dict(a)
             break
     for a in release["assets"]:
         name = a["name"].lower()
         if name.lower().endswith(f'{fnend}.sigstore.json'):
-            bundle = a
+            bundle = dict(a)
             break
     if not asset:
         raise BaoInstallError("Could not find a release for this OS")
@@ -197,7 +197,6 @@ def install_bao(install_dir, release=bao_available()):
     try:
         with tempfile.TemporaryDirectory() as td:
             tpath = Path(td)
-
             lgr.debug(f"Downloading {asset['browser_download_url']}")
             download_resp = requests.get(
                 asset['browser_download_url'],
@@ -268,7 +267,7 @@ def install_bao(install_dir, release=bao_available()):
             shutil.copy(temp_bao_binary, bao_binary)
 
     except Exception as exc:
-        raise BaoInstallError from exc
+        raise BaoInstallError(str(exc)) from exc
 
     ui.message(f"'bao' {release['tag_name']} installed.")
     ui.message(

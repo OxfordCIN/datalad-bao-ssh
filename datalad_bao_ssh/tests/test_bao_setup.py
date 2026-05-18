@@ -6,6 +6,7 @@ import os.path
 import pexpect
 import platform
 import pytest
+import shutil
 import ssl
 import stat
 import subprocess as sp
@@ -70,10 +71,10 @@ def bao(tmp_path, monkeypatch):
 @pytest.fixture
 def mock_bao(mocker, tmp_path):
     bao_script = tmp_path / 'bao'
-    bao_script.write_bytes(b'''#!/bin/bash
-
-''')
-
+    test_dir = Path(__file__).parent
+    test_bao_script = test_dir / 'fake_bao.sh'
+    shutil.copy(test_bao_script, bao_script)
+    os.chmod(bao_script, 0o755)
     which = mocker.patch(
         "datalad_bao_ssh.bao_setup.shutil.which",
         return_value=str(bao_script))
@@ -95,16 +96,26 @@ def mock_no_bao(mocker):
 
 
 @pytest.fixture
-def mock_ui_message(mocker):
-    fake_ui = SimpleNamespace(
-        message=Mock(),
-    )
-    ui_patch = mocker.patch(
+def datalad_ui(mocker):
+    def create(yesnos=[], questions=[]):
+        fake_ui = SimpleNamespace(
+            message=Mock(),
+            yesno=Mock(side_effect=yesnos),
+            question=Mock(side_effect=questions)
+        )
+        ui = mocker.patch(
             "datalad_bao_ssh.bao_setup.ui",
-            fake_ui)
+            fake_ui
+        )
+        return ui
+    return create
 
+
+@pytest.fixture
+def mock_ui_message(datalad_ui):
+    ui = datalad_ui()
     return {
-        'ui': ui_patch
+        'ui': ui
     }
 
 
@@ -113,7 +124,7 @@ def renew_certificate(
         monkeypatch, tmp_path,
         httpserver: HTTPServer,
         requests_ca_bundle, ca_cert_path):
-    def create(openid="0", bao=""):
+    def create(openid=False, bao=""):
         mod_dir = Path(__file__).parent.parent
         home_dir = tmp_path
         ca_key = _make_ca_keypair(home_dir)
@@ -135,8 +146,8 @@ def renew_certificate(
             "CERTTYPE": "ed25519",
             "BAOHOST": baosrv,
             "BAOPORT": baoport,
-            "BAOAUTH": "ldap",
-            "BAOOPENID": openid,
+            "BAOAUTH": "ldap" if not openid else 'oidc',
+            "BAOOPENID": "1" if openid else "0",
             "BAOBIN": bao,
         }
         renew_scripts = {
@@ -189,7 +200,7 @@ def renew_certificate(
 
 
 @pytest.fixture
-def ssh_environment(tmp_path, mocker):
+def ssh_environment(tmp_path, mocker, datalad_ui):
     shell = os.environ['SHELL']
     executable = os.path.basename(shell)
     if executable == 'tcsh':
@@ -228,25 +239,25 @@ def ssh_environment(tmp_path, mocker):
                 'RIA_HOSTS', 'GIT_REQUIRES_USERNAME',
                 'GIT_SSH_HOSTS', )
     vpn_connect = False
-    fake_ui = SimpleNamespace(
-        message=Mock(),
-        yesno=Mock(side_effect=(
-            False, user_response['GIT_REQUIRES_USERNAME'])),
-        question=Mock(side_effect=[
-                user_response['ROLE'],
-                user_response['PRINCIPAL'],
-                user_response["CERTTYPE"],
-                user_response["BAOHOST"],
-                user_response["BAOPORT"],
-                user_response["BAOAUTH"],
-                user_response["RIA_HOSTS"][0],
-                user_response["RIA_HOSTS"][1],
-                "",
-                user_response['GIT_SSH_HOSTS'][0],
-                "",
-                ria_username,
-                ria_username,
-            ])
+
+    fake_ui = datalad_ui(
+        yesnos=(
+            False, user_response['GIT_REQUIRES_USERNAME']),
+        questions=[
+            user_response['ROLE'],
+            user_response['PRINCIPAL'],
+            user_response["CERTTYPE"],
+            user_response["BAOHOST"],
+            user_response["BAOPORT"],
+            user_response["BAOAUTH"],
+            user_response["RIA_HOSTS"][0],
+            user_response["RIA_HOSTS"][1],
+            "",
+            user_response['GIT_SSH_HOSTS'][0],
+            "",
+            ria_username,
+            ria_username,
+        ]
     )
     patches = {
         "Path.home": mocker.patch(
@@ -275,11 +286,12 @@ def ssh_environment(tmp_path, mocker):
 def mock_github(
         httpserver, tmp_path, monkeypatch, ca, ca_cert_path):
     def create(
-            archive_type="tar.gz", version="1.2.4",
-            os="Linux", arch="x86_64"):
-        archive = "bao_{version}_{os}_{arch}.tar.gz"
+            archive_type=".tar.gz", version="1.2.4",
+            os="Linux", arch="x86_64", no_sig=False):
+        archive = f"bao_{version}_{os}_{arch}{archive_type}"
         sig = f"{archive}.sigstore.json"
         url_path = '/repos/openbao/openbao/releases/latest'
+        download_url_path = f'/openbao/openbao/releases/download/v{version}'
         server_response = {
             "tag_name": f"v{version}",
             "assets": [
@@ -287,17 +299,18 @@ def mock_github(
                     "name": f"{archive}",
                     "browser_download_url": (
                         f"{httpserver.url_for(
-                            url_path + '/' + archive)}")
+                            download_url_path + '/' + archive)}")
                 },
                 {
                     "name": f"{sig}",
                     "browser_download_url": (
                         f"{httpserver.url_for(
-                            url_path + '/' + sig)}")
+                            download_url_path + '/' + sig)}")
                 }
             ]
         }
-
+        if no_sig:
+            server_response['assets'].pop(-1)
         monkeypatch.setattr(
             "datalad_bao_ssh.bao_setup.certifi.where", lambda: ca_cert_path)
 
@@ -308,6 +321,7 @@ def mock_github(
             'archive': archive,
             'sig': sig,
             'url_path': url_path,
+            'download_url_path': download_url_path,
             'url': httpserver.url_for(url_path),
             'server_response': server_response
         }
@@ -330,6 +344,15 @@ def make_zip(entries: dict[str, bytes]) -> zipfile.ZipFile:
     return zipfile.ZipFile(buf, mode="r")
 
 
+def make_zip_file(
+        tmp_path, zipname, entries: dict[str, bytes]) -> zipfile.ZipFile:
+    tf = tmp_path / zipname
+    with zipfile.ZipFile(tf, mode="w") as zf:
+        for name, data in entries.items():
+            zf.writestr(name, data)
+    return tf
+
+
 def make_tar(entries: dict[str, bytes]) -> tarfile.TarFile:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w") as tf:
@@ -339,6 +362,17 @@ def make_tar(entries: dict[str, bytes]) -> tarfile.TarFile:
             tf.addfile(info, io.BytesIO(data))
     buf.seek(0)
     return tarfile.open(fileobj=buf, mode="r")
+
+
+def make_tar_file(
+        tmp_path, tarname, entries: dict[str, bytes]) -> tarfile.TarFile:
+    tf = tmp_path / tarname
+    with tarfile.open(tf, mode="w:gz") as tf:
+        for name, data in entries.items():
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return tf
 
 
 def test_safe_extract_zip_extracts_files(tmp_path: Path):
@@ -440,6 +474,173 @@ def test_safe_extract_tar_fallback_rejects_traversal(
         datalad_bao_ssh.bao_setup.safe_extract_tar(tar_file, outdir)
 
     assert not tar_file.extractall_called
+
+
+@pytest.mark.parametrize(
+        "system,machine,ext,special,exe",
+        [
+            ('Linux', 'x86_64', '.tar.gz', None, 'bao', ),
+            ('Linux', 'arm64', '.tar.gz', None, 'bao', ),
+            ('Darwin', 'x86_64', '.tar.gz', None, 'bao', ),
+            ('Darwin', 'arm64', '.tar.gz', None, 'bao', ),
+            ('Windows', 'x86_64', '.zip', None, 'bao.exe', ),
+            ('Windows', 'arm64', '.zip', None, 'bao.exe', ),
+            ('FreeBSD', 'x86_64', '.tar.gz', None, 'bao', ),
+            ('Linux', 'ppc64', '.tar.gz', None, 'bao', ),
+            ('Linux', 'x86_64', '.tar.gz', 'nosig', 'bao', ),
+            ('Linux', 'x86_64', '.tar.gz', 'noverify', 'bao', ),
+            ('Linux', 'x86_64', '.tar.gz', 'nofilter', 'bao', ),
+            ('Linux', 'x86_64', '.tar.gz', 'missing', 'bao', ),
+        ])
+def test_install_bao(
+        system, machine, ext, special, exe, tmp_path,
+        mock_ui_message, mock_github, mocker,
+        monkeypatch, httpserver):
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.platform.system',
+        return_value=system)
+
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.platform.machine',
+        return_value=machine)
+    no_sig = True if special == 'nosig' else False
+    gh = mock_github(
+        archive_type=ext, os=system, arch=machine, no_sig=no_sig)
+    if special == 'missing':
+        gh['server_response']['assets'][0]['name'] = 'nothing'
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.bao_available',
+        return_value=gh['server_response']
+    )
+    if special == 'noverify':
+        fake_verifier = SimpleNamespace(
+            verify_artifact=Mock(
+                side_effect=datalad_bao_ssh.bao_setup.VerificationError)
+        )
+    else:
+        fake_verifier = SimpleNamespace(
+            verify_artifact=Mock()
+        )
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.Verifier.production',
+        Mock(return_value=fake_verifier)
+    )
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.Bundle.from_json',
+        return_value="{'bundle': 'signature', }")
+    version = '1.2.3'
+    fname = f"bao_{version}_{system}_{machine}{ext}"
+    fpath = tmp_path / fname
+
+    if ext == '.zip':
+        make_zip_file(
+            tmp_path,
+            f'{fname}',
+            {exe: b'#!/bin/bash\necho "Hello"\n', },
+        )
+        ctype = "application/zip"
+    else:
+        make_tar_file(
+            tmp_path,
+            f'{fname}',
+            {exe: b'#!/bin/bash\necho "Hello"\n', },
+        )
+        ctype = "application/gzip"
+
+    httpserver.expect_request(
+        f"{gh['download_url_path']}/{gh['archive']}"
+        ).respond_with_data(
+            fpath.read_bytes(),
+            content_type=ctype)
+    if not special == 'nosig':
+        sig = tmp_path / f'{fname}.sigstore.json'
+        sig.write_text("1234")
+        httpserver.expect_request(
+            f"{gh['download_url_path']}/{gh['archive']}.sigstore.json"
+            ).respond_with_data(
+                sig.read_bytes(),
+                content_type='application/json')
+
+    install_dir = tmp_path / 'install_dir'
+    if system == 'FreeBSD':
+        with pytest.raises(
+                datalad_bao_ssh.bao_setup.BaoInstallError,
+                match=f"Unsupported OS: {system.lower()}"):
+            datalad_bao_ssh.bao_setup.install_bao(
+                install_dir=install_dir,
+                release=gh['server_response']
+            )
+    elif machine == 'ppc64':
+        with pytest.raises(
+                datalad_bao_ssh.bao_setup.BaoInstallError,
+                match=f"Unrecognised architecture {machine}"):
+            datalad_bao_ssh.bao_setup.install_bao(
+                install_dir=install_dir,
+                release=gh['server_response']
+            )
+    elif special == 'nosig':
+        with pytest.raises(
+                datalad_bao_ssh.bao_setup.BaoInstallError,
+                match="Could not find a signature for this release"):
+            datalad_bao_ssh.bao_setup.install_bao(
+                install_dir=install_dir,
+                release=gh['server_response']
+            )
+    elif special == 'noverify':
+        with pytest.raises(
+                datalad_bao_ssh.bao_setup.BaoInstallError,
+                match="Download failed verification"):
+            datalad_bao_ssh.bao_setup.install_bao(
+                install_dir=install_dir,
+                release=gh['server_response']
+            )
+    elif special == 'missing':
+        with pytest.raises(
+                datalad_bao_ssh.bao_setup.BaoInstallError,
+                match="Could not find a release for this OS"):
+            datalad_bao_ssh.bao_setup.install_bao(
+                install_dir=install_dir,
+                release=gh['server_response']
+            )
+    else:
+        if special == 'nofilter':
+            real_open = datalad_bao_ssh.bao_setup.tarfile.open
+
+            def fake_open(*args, **kwargs):
+                real_tar = real_open(*args, **kwargs)
+                return NoFilterTar(real_tar)
+
+            # patch where your code looks up tarfile.open
+            monkeypatch.setattr(
+                datalad_bao_ssh.bao_setup.tarfile,
+                "open", fake_open)
+        datalad_bao_ssh.bao_setup.install_bao(
+            install_dir=install_dir,
+            release=gh['server_response']
+        )
+
+
+class NoFilterTar:
+    def __init__(self, real_tar):
+        self._real_tar = real_tar
+
+    def __enter__(self):
+        self._real_tar.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._real_tar.__exit__(*exc)
+
+    def extractall(self, path=".", members=None, *, numeric_owner=False):
+        return self._real_tar.extractall(
+            path=path,
+            members=members,
+            numeric_owner=numeric_owner,
+            filter='data'
+        )
+
+    def __getattr__(self, name):
+        return getattr(self._real_tar, name)
 
 
 def test_bao_version(tmp_path):
@@ -1349,6 +1550,19 @@ def test_renew_certificate_curl(httpserver, tmp_path, renew_certificate):
         assert rc['username'] in principals
         assert rc['config']['PRINCIPAL'] in principals
         assert id == f"ldap-{rc['username']}"
+
+
+def test_renew_certificate_curl_openid(renew_certificate):
+    rc = renew_certificate(bao="", openid=True)
+    for shell in ['bash', 'zsh']:
+        output = sp.run(
+            rc['renew_scripts'][shell],
+            capture_output=True,
+            text=True)
+
+        assert output.returncode == 1
+        assert output.stderr == (
+            "[ERROR] Can't find the 'bao' client necessary for logins\n")
 
 
 def test_existing_certificate_curl(httpserver, tmp_path, renew_certificate):

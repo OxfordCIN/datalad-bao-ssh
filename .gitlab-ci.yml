@@ -50,6 +50,7 @@ test:
   <<: *test_template
   script:
     - apt-get -y update
+    - apt-get install zsh
     - pip install pytest pytest-cov pytest-mock pytest-httpserver
     - pip install .
     - python -m pytest
