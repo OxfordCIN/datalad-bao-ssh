@@ -1,5 +1,6 @@
-tags:
-  - $RUNNER_TAG
+default:
+  tags:
+    - $RUNNER_TAG
   
 stages:
   - test
