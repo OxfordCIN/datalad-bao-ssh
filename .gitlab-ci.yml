@@ -1,7 +1,7 @@
 default:
   tags:
     - $RUNNER_TAG
-  
+
 stages:
   - test
   - style
@@ -55,7 +55,7 @@ test:
   script:
     - apt-get -y update
     - apt-get -y install zsh
-    - pip install pytest pytest-cov pytest-mock pytest-httpserver
+    - pip install pytest pytest-cov pytest-mock pytest-httpserver pexpect trustme
     - pip install .
     - python -m pytest
 
