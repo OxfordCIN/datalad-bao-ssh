@@ -296,12 +296,12 @@ def mock_github(
             "tag_name": f"v{version}",
             "assets": [
                 {
-                    "name": f"{archive}",
+                    "name": archive,
                     "browser_download_url": httpserver.url_for(
                             download_url_path + '/' + archive)
                 },
                 {
-                    "name": f"{sig}",
+                    "name": sig,
                     "browser_download_url": httpserver.url_for(
                             download_url_path + '/' + sig)
                 }
@@ -1300,9 +1300,9 @@ def make_handler(ca_key, tmp_path, token, rc, config):
         payload = json.loads(request.data.decode("utf-8"))
         public_key = payload["public_key"]
         valid_principals = payload["valid_principals"]
-        assert valid_principals == \
-            f"{rc['server_response']['PRINCIPAL']},{
-                rc['username']}"
+        assert valid_principals == (
+            f"{rc['server_response']['PRINCIPAL']}"
+            f",{rc['username']}")
         signed_key = _sign_public_key(
             ca_key=ca_key,
             public_key=public_key,
@@ -1349,8 +1349,8 @@ def test_renew_certificate(
         ).respond_with_json(token_response)
 
         httpserver.expect_request(
-            f"/v1/ssh-client-signer/sign/{
-                rc['config']['ROLE']}",
+            "/v1/ssh-client-signer/sign/"
+            f"{rc['config']['ROLE']}",
             method="PUT",
         ).respond_with_handler(
             make_handler(
@@ -1526,8 +1526,8 @@ def test_existing_certificate(
                 pass
         config = {"validity": "+8h"}
         httpserver.expect_request(
-            f"/v1/ssh-client-signer/sign/{
-                rc['config']['ROLE']}",
+            "/v1/ssh-client-signer/sign/"
+            f"{rc['config']['ROLE']}",
             method="PUT",
         ).respond_with_handler(make_handler(
                 ca_key, tmp_path, token, rc,
@@ -1580,8 +1580,8 @@ def test_renew_certificate_curl(httpserver, tmp_path, renew_certificate):
         ).respond_with_json(token_response)
 
         httpserver.expect_request(
-            f"/v1/ssh-client-signer/sign/{
-                rc['config']['ROLE']}",
+            "/v1/ssh-client-signer/sign/"
+            f"{rc['config']['ROLE']}",
             method="PUT",
         ).respond_with_handler(
             make_handler(
@@ -1688,8 +1688,8 @@ def test_existing_certificate_curl(httpserver, tmp_path, renew_certificate):
                 pass
         config = {"validity": "+8h"}
         httpserver.expect_request(
-            f"/v1/ssh-client-signer/sign/{
-                rc['config']['ROLE']}",
+            "/v1/ssh-client-signer/sign/"
+            f"{rc['config']['ROLE']}",
             method="PUT",
         ).respond_with_handler(make_handler(
                 ca_key, tmp_path, token, rc,
