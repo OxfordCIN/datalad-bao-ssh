@@ -297,15 +297,13 @@ def mock_github(
             "assets": [
                 {
                     "name": f"{archive}",
-                    "browser_download_url": (
-                        f"{httpserver.url_for(
-                            download_url_path + '/' + archive)}")
+                    "browser_download_url": httpserver.url_for(
+                            download_url_path + '/' + archive)
                 },
                 {
                     "name": f"{sig}",
-                    "browser_download_url": (
-                        f"{httpserver.url_for(
-                            download_url_path + '/' + sig)}")
+                    "browser_download_url": httpserver.url_for(
+                            download_url_path + '/' + sig)
                 }
             ]
         }
