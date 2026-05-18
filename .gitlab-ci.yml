@@ -21,7 +21,7 @@ docs:
   stage: build
   tags:
     - docker
-  image: python:3.9
+  image: python:3.12
   before_script:
     - python -m pip install --upgrade pip setuptools
     - pip install -r requirements-devel.txt
@@ -40,7 +40,7 @@ docs:
     - docker
   parallel:
     matrix:
-     - PYVER: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+     - PYVER: ["3.10", "3.11", "3.12", "3.13"]
   image: python:$PYVER
   except:
     - tags

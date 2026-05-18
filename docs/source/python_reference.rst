@@ -6,3 +6,7 @@ High-level API commands
    :toctree: generated
 
    bao_setup
+
+      Arguments:
+
+        * update_bao (optional, boolean) - check for and update 'bao' client
