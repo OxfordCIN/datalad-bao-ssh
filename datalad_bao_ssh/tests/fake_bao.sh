@@ -285,7 +285,7 @@ EOF
           field="${1#-field=}"
           shift
           ;;
-        ssh/sign/*)
+        ssh-client-signer/sign/*)
           endpoint="$1"
           shift
           ;;
@@ -307,8 +307,8 @@ EOF
       esac
     done
 
-    [[ "$endpoint" == ssh/sign/* ]] || die "expected endpoint like ssh/sign/<role>"
-    role="${endpoint#ssh/sign/}"
+    [[ "$endpoint" == ssh-client-signer/sign/* ]] || die "expected endpoint like ssh/sign/<role>"
+    role="${endpoint#ssh-client-signer/sign/}"
     sign_public_key "$role" "$pubkey_spec" "$principals" "$ttl"
     ;;
 

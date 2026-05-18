@@ -445,24 +445,19 @@ class bao_setup(Interface):
             # services to collect the password
             no_password_methods = ['oidc', ]
             if config:
+                bao_username = ui.question(
+                    "USERNAME",
+                    default=getpass.getuser(),
+                    title=(
+                        "Enter your username for the Datalad service: ")
+                )
+                config['USERNAME'] = bao_username
                 if config['BAOAUTH'] in no_password_methods:
                     config['BAOOPENID'] = 1
                 else:
                     config['BAOOPENID'] = 0
                 config['BAOBIN'] = bao_binary
-                usernames = {}
-                username_servers = config['RIA_HOSTS']
                 ssh_servers = config['RIA_HOSTS'] + config['GIT_SSH_HOSTS']
-                if config['GIT_REQUIRES_USERNAME']:
-                    username_servers.extend(config['GIT_SSH_HOSTS'])
-                for ssh_host in username_servers:
-                    usernames[ssh_host] = ui.question(
-                            "USERNAME",
-                            default=getpass.getuser(),
-                            title=(
-                                "Enter your username on "
-                                f"the server {ssh_host}: ")
-                        )
 
                 ssh_folder = Path.home() / '.ssh'
                 stage = "Installing renewal script"
@@ -508,13 +503,19 @@ class bao_setup(Interface):
 
                     with open(ssh_conf_file, 'w') as sshcf:
                         for host in ssh_servers:
+                            username = bao_username
+                            if (
+                                    host in config['GIT_SSH_HOSTS']
+                                    and not config['GIT_REQUIRES_USERNAME']):
+                                username = None
+
                             sshcf.write(
                                 ssh_host_stanza(
                                     host,
                                     idfile,
                                     user_ssh_exec,
                                     cert_ext,
-                                    username=usernames.get(host, None)))
+                                    username=username))
 
                     stage = "Including SSH configuration into main config file"
                     lgr.info(stage)

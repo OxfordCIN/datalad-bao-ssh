@@ -11,6 +11,7 @@ BAOPORT="**BAOPORT**"
 BAOAUTH="**BAOAUTH**"
 BAOOPENID="**BAOOPENID**"
 BAOBIN="**BAOBIN**"
+BAOUSERNAME="**USERNAME**"
 
 BAOSRV="https://${BAOHOST}:${BAOPORT}"
 KEYFILE="id-${CERTTYPE}-${BAOHOST//./-}"
@@ -97,8 +98,6 @@ if [ ! -d "$HOME/.ssh" ]; then
   fi
 fi
 
-printf "Username: "
-read -r raw_username
 # Look for bao command
 if command -v bao >/dev/null 2>&1 || command -v "$BAOBIN" 2>&1; then
   VAULT_ADDR="$BAOSRV"
@@ -107,14 +106,14 @@ if command -v bao >/dev/null 2>&1 || command -v "$BAOBIN" 2>&1; then
     VAULT_CACERT="$CACERT"
     export VAULT_CACERT
   fi
-  username="$raw_username"
+  username="$BAOUSERNAME"
 else
   BAOBIN=""
   if [ "$BAOOPENID" = "1" ]; then
     error "Can't find the 'bao' client necessary for logins" >&2
     exit 1
   fi
-  username=$(urlencode "$raw_username")
+  username=$(urlencode "$BAOUSERNAME")
   printf "Passphrase: "
   read -r -s PASSWORD
   echo ""
@@ -148,7 +147,7 @@ else
       "${BAOSRV}/v1/auth/${BAOAUTH}/login/${username}" | jq -r '.auth.client_token')
   unset PASSWORD
   if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
-    echo "Login failed" >&2
+    error "Login failed"
     exit 1
   fi
 fi
