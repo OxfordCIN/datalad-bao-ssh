@@ -130,7 +130,11 @@ fi
 
 if [ -n "$BAOBIN" ]; then
   debug "Logging in with bao with method ${BAOAUTH}"
-  "$BAOBIN" login --method="${BAOAUTH}" username="$username"
+  if [ "$BAOOPENID" = "0" ]; then
+    "$BAOBIN" login -method="${BAOAUTH}" username="$username"
+  else
+    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}"
+  fi
   trap remove_token EXIT INT TERM
 else
   debug "Logging in with cURL with method ${BAOAUTH}"
@@ -161,7 +165,7 @@ ssh-keygen -t ed25519 -C "${username}@${BAOHOST}" \
 if [ -n "$BAOBIN" ]; then
   debug "Signing certificate with bao against $ROLE"
   SIGNED_CERT=$(
-    "$BAOBIN" write --field=signed_key "ssh-client-signer/sign/$ROLE" \
+    "$BAOBIN" write -field=signed_key "ssh-client-signer/sign/$ROLE" \
       public_key="@$dl_pub_f" \
       valid_principals="${PRINCIPAL},${username}"
   )
