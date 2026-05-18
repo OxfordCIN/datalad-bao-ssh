@@ -287,7 +287,7 @@ def mock_github(
         httpserver, tmp_path, monkeypatch, ca, ca_cert_path):
     def create(
             archive_type=".tar.gz", version="1.2.4",
-            os="Linux", arch="x86_64", no_sig=False):
+            os="Linux", arch="x86_64", no_sig=False, fail=False):
         archive = f"bao_{version}_{os}_{arch}{archive_type}"
         sig = f"{archive}.sigstore.json"
         url_path = '/repos/openbao/openbao/releases/latest'
@@ -314,9 +314,21 @@ def mock_github(
         monkeypatch.setattr(
             "datalad_bao_ssh.bao_setup.certifi.where", lambda: ca_cert_path)
 
-        httpserver.expect_request(
-            url_path).respond_with_json(
-                server_response)
+        if not fail:
+            httpserver.expect_request(
+                url_path).respond_with_json(
+                    server_response)
+        else:
+            if fail is True:
+                code = '500'
+            else:
+                code = fail
+            httpserver.expect_request(
+                url_path).respond_with_data(
+                    "Internal Server Error",
+                    status=code,
+                    content_type="text/plain"
+                )
         return {
             'archive': archive,
             'sig': sig,
@@ -491,6 +503,7 @@ def test_safe_extract_tar_fallback_rejects_traversal(
             ('Linux', 'x86_64', '.tar.gz', 'noverify', 'bao', ),
             ('Linux', 'x86_64', '.tar.gz', 'nofilter', 'bao', ),
             ('Linux', 'x86_64', '.tar.gz', 'missing', 'bao', ),
+            ('Linux', 'x86_64', '.tar.gz', 'asstr', 'bao', ),
         ])
 def test_install_bao(
         system, machine, ext, special, exe, tmp_path,
@@ -603,6 +616,10 @@ def test_install_bao(
                 release=gh['server_response']
             )
     else:
+        if special == 'asstr':
+            idir = str(install_dir)
+        else:
+            idir = install_dir
         if special == 'nofilter':
             real_open = datalad_bao_ssh.bao_setup.tarfile.open
 
@@ -615,7 +632,7 @@ def test_install_bao(
                 datalad_bao_ssh.bao_setup.tarfile,
                 "open", fake_open)
         datalad_bao_ssh.bao_setup.install_bao(
-            install_dir=install_dir,
+            install_dir=idir,
             release=gh['server_response']
         )
 
@@ -657,6 +674,16 @@ def test_bao_available(mock_github):
     gh = mock_github()
     assert datalad_bao_ssh.bao_setup.bao_available(
         release_url=gh['url'])['tag_name'] == 'v1.2.4'
+
+
+@pytest.mark.parametrize(
+        "failure", ['404', '403', '500']
+)
+def test_bao_available_exception(failure, mock_github):
+    gh = mock_github(fail=failure)
+    with pytest.raises(datalad_bao_ssh.bao_setup.BaoInstallError):
+        datalad_bao_ssh.bao_setup.bao_available(
+            release_url=gh['url'])
 
 
 def test_bad_bao(mock_bao):
@@ -776,8 +803,11 @@ def test_update_bao_requested(mocker):
             'error_message': "Failed", }]
 
 
+@pytest.mark.parametrize(
+        "authmethod", ['ldap', 'oidc', ]
+)
 def test_bao_setup(
-        httpserver: HTTPServer, requests_ca_bundle,
+        authmethod, httpserver: HTTPServer, requests_ca_bundle,
         ssh_environment, mocker,
         mock_no_bao):
     shell = ssh_environment['shell']
@@ -789,7 +819,7 @@ def test_bao_setup(
         "CERTTYPE": "ed25519",
         "BAOHOST": baosrv,
         "BAOPORT": "8200",
-        "BAOAUTH": "ldap",
+        "BAOAUTH": authmethod,
         "GIT_REQUIRES_USERNAME": False,
         "GIT_SSH_HOSTS": [
             "git1.com",
@@ -857,7 +887,7 @@ Match host git1.com exec "{exec_script}"
 
     expected_script = ssh_environment['tmp_path'] / 'renewal_script'
     mod_dir = Path(__file__).parent.parent
-    server_response['BAOOPENID'] = "0"
+    server_response['BAOOPENID'] = "1" if authmethod == 'oidc' else "0"
     server_response['BAOBIN'] = ""
     server_response['USERNAME'] = ssh_environment['username']
     with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
