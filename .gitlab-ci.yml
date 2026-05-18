@@ -1,3 +1,6 @@
+tags:
+  - $RUNNER_TAG
+  
 stages:
   - test
   - style
