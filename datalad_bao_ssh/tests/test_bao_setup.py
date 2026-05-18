@@ -1377,9 +1377,10 @@ def test_renew_certificate(
         ssh_dir = rc['ssh_dir']
         key_file = (
             ssh_dir
-            / f'id-{rc[
-                'config']['CERTTYPE']}-{rc[
-                        'httpserver'].host.replace('.', '-')}')
+            / (
+                f'id-{rc['config']['CERTTYPE']}'
+                f'-{rc['httpserver'].host.replace('.', '-')}'
+                ))
         pub_file = f'{key_file}.pub'
         cert_file = f'{key_file}-cert.pub'
         for sshfile in (key_file, pub_file, cert_file):
@@ -1449,9 +1450,10 @@ def test_renew_certificate_openid(
         ssh_dir = rc['ssh_dir']
         key_file = (
             ssh_dir
-            / f'id-{rc[
-                'config']['CERTTYPE']}-{rc[
-                        'httpserver'].host.replace('.', '-')}')
+            / (
+                f'id-{rc['config']['CERTTYPE']}'
+                f'-{rc['httpserver'].host.replace('.', '-')}'
+                ))
         pub_file = f'{key_file}.pub'
         cert_file = f'{key_file}-cert.pub'
         for sshfile in (key_file, pub_file, cert_file):
@@ -1514,9 +1516,10 @@ def test_existing_certificate(
         ssh_dir = rc['ssh_dir']
         key_file = (
             ssh_dir
-            / f'id-{rc[
-                'config']['CERTTYPE']}-{rc[
-                        'httpserver'].host.replace('.', '-')}')
+            / (
+                f'id-{rc['config']['CERTTYPE']}'
+                f'-{rc['httpserver'].host.replace('.', '-')}'
+                ))
         pub_file = f'{key_file}.pub'
         cert_file = f'{key_file}-cert.pub'
         for sshfile in (key_file, pub_file, cert_file):
@@ -1598,9 +1601,10 @@ def test_renew_certificate_curl(httpserver, tmp_path, renew_certificate):
         ssh_dir = rc['ssh_dir']
         key_file = (
             ssh_dir
-            / f'id-{rc[
-                'config']['CERTTYPE']}-{rc[
-                        'httpserver'].host.replace('.', '-')}')
+            / (
+                f'id-{rc['config']['CERTTYPE']}'
+                f'-{rc['httpserver'].host.replace('.', '-')}'
+                ))
         pub_file = f'{key_file}.pub'
         cert_file = f'{key_file}-cert.pub'
         for sshfile in (key_file, pub_file, cert_file):
@@ -1676,9 +1680,10 @@ def test_existing_certificate_curl(httpserver, tmp_path, renew_certificate):
         ssh_dir = rc['ssh_dir']
         key_file = (
             ssh_dir
-            / f'id-{rc[
-                'config']['CERTTYPE']}-{rc[
-                        'httpserver'].host.replace('.', '-')}')
+            / (
+                f'id-{rc['config']['CERTTYPE']}'
+                f'-{rc['httpserver'].host.replace('.', '-')}'
+                ))
         pub_file = f'{key_file}.pub'
         cert_file = f'{key_file}-cert.pub'
         for sshfile in (key_file, pub_file, cert_file):
