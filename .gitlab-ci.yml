@@ -54,10 +54,10 @@ test:
   <<: *test_template
   script:
     - apt-get -y update
-    - apt-get -y install zsh jq curl
+    - apt-get -y install zsh jq curl bash
     - pip install pytest pytest-cov pytest-mock pytest-httpserver pexpect trustme
     - pip install .
-    - python -m pytest
+    - bash -c "python -m pytest"
 
 # Build source and wheel distributions
 # suitable for uploading to PyPi.

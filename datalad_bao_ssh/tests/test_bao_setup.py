@@ -202,7 +202,7 @@ def renew_certificate(
 
 @pytest.fixture
 def ssh_environment(tmp_path, mocker, datalad_ui):
-    shell = os.environ['SHELL']
+    shell = os.environ.get('SHELL', '/bin/bash')
     executable = os.path.basename(shell)
     if executable == 'tcsh':
         system = platform.system()

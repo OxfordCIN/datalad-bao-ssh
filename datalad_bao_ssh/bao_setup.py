@@ -278,7 +278,7 @@ def install_bao(install_dir, release=bao_available()):
 
 
 def shell():
-    shell = os.environ['SHELL']
+    shell = os.environ.get('SHELL', '/bin/sh')
     executable = os.path.basename(shell)
     if executable == 'tcsh':
         system = platform.system()
