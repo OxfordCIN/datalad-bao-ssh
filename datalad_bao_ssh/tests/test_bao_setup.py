@@ -1703,7 +1703,7 @@ def test_existing_certificate_curl(httpserver, tmp_path, renew_certificate):
             rc['renew_scripts'][shell],
             capture_output=True,
             text=True,
-            input=f'{rc['password']}\n')
+            input=f'{rc["password"]}\n')
         assert output.returncode == 0
         assert 'Logging into access control server...' in output.stderr
 
