@@ -90,14 +90,6 @@ if [ -f "$CERT" ]; then
   fi
 fi
 
-if [ ! -d "$HOME/.ssh" ]; then
-  mkdir "$HOME/.ssh"
-  chmod 0700 "$HOME/.ssh"
-  if which restorecon >/dev/null 2>&1 ; then
-    restorecon -R "$HOME/.ssh"
-  fi
-fi
-
 # Look for bao command
 if command -v bao >/dev/null 2>&1 || command -v "$BAOBIN" 2>&1; then
   VAULT_ADDR="$BAOSRV"
@@ -108,6 +100,14 @@ if command -v bao >/dev/null 2>&1 || command -v "$BAOBIN" 2>&1; then
   fi
   username="$BAOUSERNAME"
 else
+  if ! command -v jq >/dev/null 2>&1; then
+    error "jq command not found - this is necessary if 'bao' isn't installed"
+    exit 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    error "curl command not found - this is necessary if 'bao' isn't installed"
+    exit 1
+  fi
   BAOBIN=""
   if [ "$BAOOPENID" = "1" ]; then
     error "Can't find the 'bao' client necessary for logins" >&2
@@ -117,6 +117,14 @@ else
   printf "Passphrase: "
   read -r -s PASSWORD
   echo ""
+fi
+
+if [ ! -d "$HOME/.ssh" ]; then
+  mkdir "$HOME/.ssh"
+  chmod 0700 "$HOME/.ssh"
+  if which restorecon >/dev/null 2>&1 ; then
+    restorecon -R "$HOME/.ssh"
+  fi
 fi
 
 # Attempt Bao login
