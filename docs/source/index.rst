@@ -13,8 +13,8 @@ Prerequisites
 -------------
 
 Ideally this script can utilise the `bao` client program to handle your
-logins, but can fall back to basic system tools for **some** authentication
-backends.
+logins, but can fall back to basic system tools (cURL and jq) for **some**
+authentication backends - if it can't find these then the script will fail.
 If your system already has the `bao` client installed then make
 sure this is available before running this command. This might involve loading
 and environment module or ensuring the system `bao` is in your software
