@@ -1229,8 +1229,7 @@ def test_bao_setup_user_exit(
 def test_bao_setup_permissions_issue(
         ssh_environment, requests_ca_bundle,
         mock_no_bao, monkeypatch):
-    os.chmod(ssh_environment['ssh_dir'], 0o555)
-    monkeypatch.setenv("HOME", ssh_environment['ssh_dir'].parent)
+    os.chmod(ssh_environment['ssh_dir'], 0o500)
     with pytest.raises(IncompleteResultsError):
         status = list(bao_setup.__call__())
         assert status[0]['status'] == 'error'

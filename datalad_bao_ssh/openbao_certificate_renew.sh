@@ -127,6 +127,11 @@ if [ ! -d "$HOME/.ssh" ]; then
   fi
 fi
 
+if [ ! -w "$HOME/.ssh" ]; then
+  error "Unable to write to $HOME/.ssh"
+  exit 1
+fi
+
 # Attempt Bao login
 info "Logging into access control server..."
 if [ -n "$CACERT" ]; then

@@ -542,7 +542,7 @@ class bao_setup(Interface):
                             os.replace(new_conf, main_ssh_conf)
                     status_dict.update(
                         {'msg': "OpenBao certificate renewals configured"})
-                except (PermissionError, IOError, ) as exc:
+                except Exception as exc:
                     status_dict.update(
                         {
                             'status': 'error',
