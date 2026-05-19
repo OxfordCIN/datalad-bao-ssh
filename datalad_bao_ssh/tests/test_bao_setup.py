@@ -54,7 +54,7 @@ def ca_cert_path(ca):
 # Test level fixtures
 @pytest.fixture
 def requests_ca_bundle(monkeypatch, ca):
-    monkeypatch.setenv("DATALAD_BAO_SSH_CA_CERT", ca)
+    monkeypatch.setenv("DATALAD_BAO_SSH_CA_CERT", str(ca))
     monkeypatch.setenv("DATALAD_BAO_SSH_DEBUG", "1")
     with ca.cert_pem.tempfile() as ca_pem:
         monkeypatch.setenv("REQUESTS_CA_BUNDLE", str(ca_pem))
@@ -64,7 +64,7 @@ def requests_ca_bundle(monkeypatch, ca):
 @pytest.fixture
 def bao(tmp_path, monkeypatch):
     bao_script = datalad_bao_ssh.bao_setup.install_bao(tmp_path)
-    monkeypatch.setenv("PATH", tmp_path, prepend=os.pathsep)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
     return bao_script
 
 
@@ -182,7 +182,7 @@ def renew_certificate(
             ]
         })
 
-        monkeypatch.setenv('HOME', tmp_path)
+        monkeypatch.setenv('HOME', str(tmp_path))
         monkeypatch.setenv('DATALAD_BAO_SSH_CA_CERT', ca_cert_path)
         return {
             'home_dir': home_dir,
@@ -1232,8 +1232,10 @@ def test_bao_setup_permissions_issue(
     os.chmod(ssh_environment['ssh_dir'], 0o555)
     with pytest.raises(IncompleteResultsError):
         status = list(bao_setup.__call__())
-        assert status['status'] == 'error'
-        assert status['error_message'] == "Failed at Installing renewal script"
+        assert status[0]['status'] == 'error'
+        assert (
+            status[0]['error_message']
+            == "Failed at Installing renewal script")
 
 
 def test_bao_setup_shell_tcsh(
@@ -1431,13 +1433,13 @@ def test_renew_certificate_openid(
     rc = renew_certificate(bao=str(mock_bao['script']), openid=True)
     fake_home = tmp_path / 'home'
     monkeypatch.setenv(
-        "BAO_FAKE_HOME", fake_home
+        "BAO_FAKE_HOME", str(fake_home)
     )
     monkeypatch.setenv(
         "BAO_FAKE_TTL", '10s'
     )
     monkeypatch.setenv(
-        "PATH", mock_bao['script'].parent, prepend=os.pathsep)
+        "PATH", str(mock_bao['script'].parent), prepend=os.pathsep)
     for shell in ['bash', 'zsh']:
         shutil.rmtree(fake_home, ignore_errors=True)
         fake_home.mkdir()
