@@ -1217,6 +1217,54 @@ Match host git1.com exec "{exec_script}"
     assert actual_script == required_script
 
 
+def test_bao_setup_create_ssh(
+        httpserver: HTTPServer, requests_ca_bundle,
+        ssh_environment, mocker,
+        mock_no_bao):
+    shutil.rmtree(ssh_environment['ssh_dir'])
+
+    baosrv = "baoserver.com"
+    server_response = {
+        "ROLE": "datalad-role",
+        "PRINCIPAL": "dataladUsers",
+        "CERTTYPE": "ed25519",
+        "BAOHOST": baosrv,
+        "BAOPORT": "8200",
+        "BAOAUTH": 'ldap',
+        "GIT_REQUIRES_USERNAME": False,
+        "GIT_SSH_HOSTS": [
+            "git1.com",
+        ],
+        "RIA_HOSTS": [
+            "ria1.com",
+            "ria2.com"
+        ]
+    }
+    httpserver.expect_request(
+        "/ssh_conf.json").respond_with_json(
+            server_response)
+    mocker.patch(
+        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        return_value=(
+            f"{httpserver.url_for('/ssh_conf.json')}")
+    )
+    ssh_dir = ssh_environment['ssh_dir']
+    ssh_environment['patches']['ui'].question.side_effect = [
+        ssh_environment['username'], ]
+
+    status = list(bao_setup.__call__())
+    assert status == [{
+        'action': 'bao_setup',
+        'status': 'ok',
+        'msg': 'OpenBao certificate renewals configured',
+    }]
+    baosuffix = f'{baosrv.replace(".", "-")}'
+    ria_conf_file = ssh_dir / f"{baosuffix}.conf"
+    assert os.path.exists(ria_conf_file)
+    assert os.path.exists(ssh_dir / f'{baosuffix}-renew.sh')
+    assert os.path.exists(ssh_dir)
+
+
 def test_bao_setup_user_exit(
         ssh_environment, requests_ca_bundle,
         mock_no_bao):
@@ -1230,12 +1278,11 @@ def test_bao_setup_permissions_issue(
         ssh_environment, requests_ca_bundle,
         mock_no_bao, monkeypatch):
     os.chmod(ssh_environment['ssh_dir'], 0o500)
-    with pytest.raises(IncompleteResultsError):
-        status = list(bao_setup.__call__())
-        assert status[0]['status'] == 'error'
-        assert (
-            status[0]['error_message']
-            == "Failed at Installing renewal script")
+    breakpoint()
+    with pytest.raises(IncompleteResultsError) as exc_info:
+        list(bao_setup.__call__())
+
+    assert "Failed at Checking your .ssh folder" in str(exc_info.value)
 
 
 def test_bao_setup_shell_tcsh(

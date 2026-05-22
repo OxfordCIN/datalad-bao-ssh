@@ -458,24 +458,31 @@ class bao_setup(Interface):
                     config['BAOOPENID'] = 0
                 config['BAOBIN'] = bao_binary
                 ssh_servers = config['RIA_HOSTS'] + config['GIT_SSH_HOSTS']
-
                 ssh_folder = Path.home() / '.ssh'
-                if not ssh_folder.exists():
-                    ssh_folder.mkdir()
-                    ssh_folder.chmod(0o700)
-
-                stage = "Installing renewal script"
-                lgr.info(stage)
-                ssh_exec = files("datalad_bao_ssh").joinpath(
-                    "openbao_certificate_renew.sh"
-                )
-                user_ssh_exec = (
-                    ssh_folder
-                    / f"{config['BAOHOST'].replace('.', '-')}-renew.sh")
-                skiplines = (
-                    'RIA_HOSTS', 'GIT_REQUIRES_USERNAME',
-                    'GIT_SSH_HOSTS', )
                 try:
+                    stage = "Checking your .ssh folder"
+                    if not ssh_folder.exists():
+                        ssh_folder.mkdir()
+                        ssh_folder.chmod(0o700)
+                    if not (ssh_folder / 'config').exists():
+                        (ssh_folder / 'config').write_text('')
+                    try:
+                        with tempfile.TemporaryFile(dir=ssh_folder):
+                            pass
+                    except Exception:
+                        raise BaoInstallError(
+                            "Unable to write to your .ssh folder")
+                    stage = "Installing renewal script"
+                    lgr.info(stage)
+                    ssh_exec = files("datalad_bao_ssh").joinpath(
+                        "openbao_certificate_renew.sh"
+                    )
+                    user_ssh_exec = (
+                        ssh_folder
+                        / f"{config['BAOHOST'].replace('.', '-')}-renew.sh")
+                    skiplines = (
+                        'RIA_HOSTS', 'GIT_REQUIRES_USERNAME',
+                        'GIT_SSH_HOSTS', )
                     with as_file(ssh_exec) as ssh_exec_path:
                         with open(ssh_exec_path, 'r') as sshef:
                             with open(user_ssh_exec, 'w') as usshef:
