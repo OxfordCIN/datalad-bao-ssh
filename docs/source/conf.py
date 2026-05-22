@@ -29,7 +29,7 @@ import datalad_bao_ssh
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
-#sys.path.insert(0, os.path.abspath('.'))
+# sys.path.insert(0, os.path.abspath('.'))
 
 # generate missing pieces
 for setup_py_path in (opj(pardir, 'setup.py'),  # travis
@@ -39,12 +39,13 @@ for setup_py_path in (opj(pardir, 'setup.py'),  # travis
         # Build manpage
         try:
             subprocess.run(
-                args=[setup_py_path, 'build_manpage',
-                     '--cmdsuite', 'datalad_oxcin_login:command_suite',
-                     '--manpath', abspath(opj(
-                         dirname(setup_py_path), 'build', 'man')),
-                     '--rstpath', opj(dirname(__file__), 'generated', 'man'),
-                     ],
+                args=[
+                    setup_py_path, 'build_manpage',
+                    '--cmdsuite', 'datalad_oxcin_login:command_suite',
+                    '--manpath', abspath(opj(
+                        dirname(setup_py_path), 'build', 'man')),
+                    '--rstpath', opj(dirname(__file__), 'generated', 'man'),
+                ],
                 check=True,
             )
         except (FileNotFoundError, subprocess.CalledProcessError):
@@ -54,7 +55,7 @@ for setup_py_path in (opj(pardir, 'setup.py'),  # travis
 # -- General configuration ------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
-#needs_sphinx = '1.0'
+# needs_sphinx = '1.0'
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
