@@ -224,7 +224,7 @@ def install_bao(install_dir, release=bao_available()):
 
             expected_identity = Identity(
                 identity="https://github.com/openbao/openbao/.github/"
-                "workflows/release.yml@refs/tags/v2.5.3",
+                f"workflows/release.yml@refs/tags/{release['tag_name']}",
                 issuer="https://token.actions.githubusercontent.com")
 
             verifier = Verifier.production()
@@ -460,6 +460,10 @@ class bao_setup(Interface):
                 ssh_servers = config['RIA_HOSTS'] + config['GIT_SSH_HOSTS']
 
                 ssh_folder = Path.home() / '.ssh'
+                if not ssh_folder.exists():
+                    ssh_folder.mkdir()
+                    ssh_folder.chmod(0o700)
+
                 stage = "Installing renewal script"
                 lgr.info(stage)
                 ssh_exec = files("datalad_bao_ssh").joinpath(
