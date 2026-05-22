@@ -1278,7 +1278,6 @@ def test_bao_setup_permissions_issue(
         ssh_environment, requests_ca_bundle,
         mock_no_bao, monkeypatch):
     os.chmod(ssh_environment['ssh_dir'], 0o500)
-    breakpoint()
     with pytest.raises(IncompleteResultsError) as exc_info:
         list(bao_setup.__call__())
 
