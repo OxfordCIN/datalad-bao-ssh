@@ -1276,11 +1276,14 @@ def test_bao_setup_user_exit(
 
 def test_bao_setup_permissions_issue(
         ssh_environment, requests_ca_bundle,
-        mock_no_bao, monkeypatch):
-    os.chmod(ssh_environment['ssh_dir'], 0o500)
+        mock_no_bao, mocker):
+    mocker.patch(
+        "datalad_bao_ssh.bao_setup.tempfile.TemporaryFile",
+        side_effect=PermissionError("denied"),
+    )
+
     with pytest.raises(IncompleteResultsError) as exc_info:
         list(bao_setup.__call__())
-
     assert "Failed at Checking your .ssh folder" in str(exc_info.value)
 
 
