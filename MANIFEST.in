@@ -1,5 +1,3 @@
-include CONTRIBUTORS LICENSE
+include CONTRIBUTORS LICENSE README
 graft datalad_bao_ssh
-graft docs
-prune docs/build
 global-exclude *.py[cod]

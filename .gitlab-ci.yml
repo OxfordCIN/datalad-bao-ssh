@@ -21,23 +21,6 @@ style:
     - flake8 --max-line-length=120 --exclude=build
 
 
-docs:
-  stage: build
-  tags:
-    - docker
-  image: python:3.12
-  before_script:
-    - python -m pip install --upgrade pip setuptools
-    - pip install -r requirements-devel.txt
-    - pip install .
-  script:
-    - make -C docs html
-  artifacts:
-    paths:
-      - docs/_build/html
-    expire_in: 1 week
-
-
 .test: &test_template
   stage: test
   tags:
