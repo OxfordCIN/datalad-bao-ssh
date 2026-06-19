@@ -43,7 +43,7 @@ register_config(
     name="datalad.bao-ssh-config-url",
     title="URL of configuration server to attempt auto-configuration from",
     type=str,
-    default="https://datalad.fmrib.ox.ac.uk/bao_conf/ssh_conf.json",
+    default="https://neurodata.fmrib.ox.ac.uk/bao_conf/openbao_ssh.json",
     description="This URL, if contactable, will return a JSON configuration"
     " that will be used to automatically configure the client. If it cannot"
     " be contacted, the user will be prompted for option values",
