@@ -847,7 +847,7 @@ def test_bao_setup(
     }]
     baosuffix = f'{baosrv.replace(".", "-")}'
     exec_script = ssh_dir / f'{baosuffix}-renew.sh'
-    identity_file = ssh_dir / f'id-{baosuffix}'
+    identity_file = ssh_dir / f'id-ed25519-{baosuffix}'
     # public_file = f'{identity_file}.pub'
     certificate_file = f'{identity_file}-cert.pub'
 
@@ -993,7 +993,7 @@ def test_bao_setup_gituser(
     }]
     baosuffix = f'{baosrv.replace(".", "-")}'
     exec_script = ssh_dir / f'{baosuffix}-renew.sh'
-    identity_file = ssh_dir / f'id-{baosuffix}'
+    identity_file = ssh_dir / f'id-ed25519-{baosuffix}'
     # public_file = f'{identity_file}.pub'
     certificate_file = f'{identity_file}-cert.pub'
 
@@ -1150,7 +1150,7 @@ def test_bao_setup_bad_dns(
     }]
     baosuffix = f'{baosrv.replace(".", "-")}'
     exec_script = ssh_dir / f'{baosuffix}-renew.sh'
-    identity_file = ssh_dir / f'id-{baosuffix}'
+    identity_file = ssh_dir / f'id-rsa-{baosuffix}'
     # public_file = f'{identity_file}.pub'
     certificate_file = f'{identity_file}-cert.pub'
 

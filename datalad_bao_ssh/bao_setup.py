@@ -507,7 +507,8 @@ class bao_setup(Interface):
                     cert_ext = '-cert.pub'
                     idfile = (
                         ssh_folder
-                        / f"id-{config['BAOHOST'].replace('.', '-')}")
+                        / (f"id-{config['CERTTYPE']}-"
+                            f"{config['BAOHOST'].replace('.', '-')}"))
                     ssh_conf_file = (
                         ssh_folder
                         / f"{config['BAOHOST'].replace('.', '-')}.conf")
