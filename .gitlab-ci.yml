@@ -54,7 +54,8 @@ build-pypi-dist:
     - docker
 
   script:
-    - pip install --upgrade wheel setuptools twine build
+    - set -e
+    - pip install --upgrade pip wheel setuptools twine build
     - python -m build
     - twine check dist/*
     - sdist=`find dist -maxdepth 1 -name *.tar.gz`
@@ -92,5 +93,6 @@ deploy-pypi-dist:
     - build-pypi-dist
 
   script:
-   - pip install wheel setuptools twine
-   - twine upload dist/*
+    - set -e
+    - pip install wheel setuptools twine
+    - twine upload dist/*

@@ -4,6 +4,8 @@ from __future__ import annotations
 __docformat__ = 'restructuredtext'
 
 from importlib.resources import as_file, files
+from importlib.metadata import (packages_distributions, version)
+from packaging.version import Version
 from pathlib import Path
 
 from datalad import cfg as dlcfg
@@ -17,6 +19,7 @@ from sigstore.verify import Verifier
 from sigstore.errors import VerificationError
 from sigstore.models import Bundle
 from sigstore.verify.policy import Identity
+from .version import VERSION
 
 import certifi
 import getpass
@@ -25,6 +28,7 @@ import logging
 import os
 import os.path
 import platform
+import re
 import requests
 import shutil
 import stat
@@ -137,7 +141,7 @@ def check_for_bao_update(install_dir: Path) -> tuple[bool, str]:
 
 
 def bao_available(
-        release_url="https://api.github.com/repos"
+        release_url: str = "https://api.github.com/repos"
         "/openbao/openbao/releases/latest") -> dict:
 
     try:
@@ -153,7 +157,7 @@ def bao_available(
     return release
 
 
-def install_bao(install_dir, release=bao_available()):
+def install_bao(install_dir: Path, release: dict = bao_available()) -> str:
     ui.message(
             f"Attempting to install Openbao client 'bao' into {install_dir}"
         )
@@ -277,7 +281,7 @@ def install_bao(install_dir, release=bao_available()):
     return str(bao_binary)
 
 
-def shell():
+def shell() -> str:
     shell = os.environ.get('SHELL', '/bin/sh')
     executable = os.path.basename(shell)
     if executable == 'tcsh':
@@ -292,7 +296,7 @@ def shell():
     return shell
 
 
-def prompt_for_config():
+def prompt_for_config() -> dict:
     config = {}
 
     ui.message(
@@ -308,7 +312,7 @@ def prompt_for_config():
         ("ROLE", "datalad-role",
             "OpenBao role that allows signing of SSH certificates"),
         ("PRINCIPAL", "dataladUsers",
-            "OpenBao 'principal' that identifies users of Datalad"),
+            "OpenBao 'principal' that identifies users of DataLad"),
         ("CERTTYPE", "ed25519",
             "SSH certificate type to generate"),
         ("BAOHOST", "",
@@ -335,7 +339,7 @@ def prompt_for_config():
     config['RIA_HOSTS'] = []
     while ssh_host != '':
         ssh_host = ui.question(
-            "Enter Datalad RIA endpoint host name (hit return to end)"
+            "Enter DataLad RIA endpoint host name (hit return to end)"
         )
         if ssh_host != '':
             config['RIA_HOSTS'].append(ssh_host)
@@ -344,7 +348,7 @@ def prompt_for_config():
     ssh_host = 'NOHOST'
     while ssh_host != '':
         ssh_host = ui.question(
-            "Enter Datalad GitLab/Hub host name (hit return to end)"
+            "Enter DataLad GitLab/Hub host name (hit return to end)"
         )
         if ssh_host != '':
             config['GIT_SSH_HOSTS'].append(ssh_host)
@@ -353,8 +357,9 @@ def prompt_for_config():
 
 
 def ssh_host_stanza(
-        host, identity_file, exec,
-        cert_ext="-cert.pub", username=None):
+        host: str, identity_file: Path, exec: Path,
+        cert_ext: str = "-cert.pub",
+        username: str | None = None) -> str:
     '''Templates the Match statement for a SSH target that calls the
     renewal script'''
 
@@ -369,6 +374,135 @@ def ssh_host_stanza(
         template += '\n'
 
     return template
+
+
+def get_renewal_confs(ssh_folder: Path) -> list[str]:
+    main_ssh_conf = ssh_folder / 'config'
+    confs = []
+    found = False
+    with open(main_ssh_conf, 'r') as ssh_conf:
+        in_my_conf = False
+        for line in ssh_conf:
+            if line.startswith("# OpenBao renewals "):
+                in_my_conf = True
+                found = True
+                continue
+            if in_my_conf:
+                if line.startswith('Include "datalad-'):
+                    confs.append(
+                        line.split(' ')[1].strip('\n').strip('"'))
+                    in_my_conf = False
+    if not found:
+        raise BaoInstallError(
+            "OpenBao doesn't appear to be configured for your DataLad"
+            " servers - please run without the update flag")
+    if not confs:
+        raise BaoInstallError(
+            "OpenBao doesn't appear to be configured correctly for your "
+            "DataLad servers - please run without the update flag")
+    return confs
+
+
+def get_config_from_renewal_conf(conf: Path) -> tuple[Path, dict]:
+    config_keys = (
+        'VERSION',
+        'ROLE',
+        'PRINCIPAL',
+        'CERTTYPE',
+        'BAOHOST',
+        'BAOPORT',
+        'BAOAUTH',
+        'BAOOPENID',
+        'BAOBIN',
+        'BAOUSERNAME', )
+    config = {}
+    match_host = re.compile(r'^Match host\b.*?\bexec\s+"([^"]+)"$')
+    script = None
+    with open(conf, 'r') as ssh_conf_include:
+        for line in ssh_conf_include:
+            if m := match_host.match(line):
+                script = m.group(1)
+    if script is None:
+        raise BaoInstallError(
+            f"Include file {conf} missing Match host statement")
+    scriptp = conf.parent / script
+    with open(scriptp, 'r') as usshef:
+        for line in usshef.readlines():
+            if line == '#!/bin/bash\n':
+                continue
+            elif line == '## End of configuration ##\n':
+                break
+            else:
+                for k in config_keys:
+                    if line.startswith(f'{k}="'):
+                        config[k] = line.split('=')[1].strip('\n').\
+                            strip('"').strip("'")
+            lgr.debug(line)
+    return script, config
+
+
+def install_certificate_renewal_script(
+        ssh_folder: Path, config: dict) -> Path:
+    ssh_exec = files("datalad_bao_ssh").joinpath(
+        "openbao_certificate_renew.sh")
+    user_ssh_exec = (
+        ssh_folder /
+        f"{config['BAOHOST'].replace('.', '-')}-renew.sh")
+
+    skiplines = (
+        'RIA_HOSTS', 'GIT_REQUIRES_USERNAME',
+        'GIT_SSH_HOSTS', )
+    with as_file(ssh_exec) as ssh_exec_path:
+        with open(ssh_exec_path, 'r') as sshef:
+            with open(user_ssh_exec, 'w') as usshef:
+                for line in sshef.readlines():
+                    if line == '#!/bin/bash\n':
+                        line = f'#!{shell()}\n'
+                    else:
+                        for k, v in config.items():
+                            if k in skiplines:
+                                continue
+                            if f'**{k}**' in line:
+                                line = line.replace(
+                                    f'**{k}**', str(v))
+                    lgr.debug(line)
+                    usshef.write(line)
+    os.chmod(user_ssh_exec, 0o700)
+    return user_ssh_exec
+
+
+def update_renewal_scripts(ssh_folder: Path, version: Version) -> list[str]:
+    messages = []
+    renewal_confs = get_renewal_confs(ssh_folder)
+    for conf in renewal_confs:
+        script, config = get_config_from_renewal_conf(ssh_folder / conf)
+        if config['VERSION'] != version:
+            lgr.info(f"Updating renewal script ({script})")
+            config['VERSION'] = version
+            install_certificate_renewal_script(ssh_folder, config)
+            messages.append(
+                f"Renewal script {os.path.basename(script)} updated to version"
+                f" {version}")
+    return messages
+
+
+def check_package_update(package: str, current: Version) ->\
+       tuple[bool | None, Version, Version, str]:
+    try:
+        r = requests.get(f"https://pypi.org/pypi/{package}/json", timeout=5)
+        r.raise_for_status()
+        latest = Version(r.json()["info"]["version"])
+    except requests.exceptions.RequestException:
+        # Network/server problem. Ignore.
+        return (
+            None, current, current,
+            "Failed to check for update - cannot contact PyPi")
+    except (KeyError, ValueError):
+        return (
+            None, current, current,
+            "Unexpected version information obtained from PyPi"
+        )
+    return (latest > current, current, latest, package, )
 
 
 # decoration auto-generates standard help
@@ -387,9 +521,9 @@ class bao_setup(Interface):
 
     # parameters of the command, must be exhaustive
     _params_ = dict(
-        update_bao=Parameter(
-            args=("--update-bao", ),
-            doc="Check for an update user's bao command",
+        update=Parameter(
+            args=("--update", ),
+            doc="Check for an update",
             action="store_true",
         ),
     )
@@ -401,28 +535,84 @@ class bao_setup(Interface):
     @eval_results
     # signature must match parameter list above
     # additional generic arguments are added by decorators
-    def __call__(update_bao=False):
+    def __call__(update=False):
         status_dict = {'action': 'bao_setup', 'status': 'ok'}
+        ui.message(f"DataLad OpenBao SSH certificate integration ({VERSION})")
+
         install_dir = dlcfg.get("datalad.bao-ssh-bao-install-dir")
         system_bao = shutil.which("bao")
+        ssh_folder = Path.home() / '.ssh'
+
         if system_bao is not None:
             system = platform.system().lower()
             bao_binary = (
                 "bao.exe" if system == "windows" else "bao")
         else:
             bao_binary = ''
-        if update_bao:
-            if system_bao is None:
-                success, message = check_for_bao_update(install_dir)
-                if not success:
-                    status_dict['status'] = 'error'
-                    status_dict['error_message'] = message
-                else:
-                    status_dict['msg'] = message
+        if update:
+            messages = []
+            # Check for updates to this package
+            available, current, latest, package_name = check_package_update(
+                packages_distributions()[__package__][0], Version(VERSION))
+            if available:
+                messages.append(
+                    f"Update available for this plugin: {current} ->"
+                    f" {latest}\n"
+                    "Use your Python package manager to update, e.g.\n"
+                    f"  pip install --upgrade {package_name}\n"
+                    "or\n"
+                    f"  uv lock --upgrade-package {package_name}\n"
+                    "  uv sync\n"
+                    "\n"
+                    "Then re-run the updater with\n"
+                    "  datalad bao_setup --update")
+            elif available is None:
+                messages.append(package_name)
+
+            # Check for updates to DataLad
+            available, current, latest, package_name = check_package_update(
+                'datalad', version("datalad"))
+            if available:
+                messages.append(
+                    f"Update available for DataLad: {current} -> {latest}\n"
+                    "Use your Python package manager to update, e.g.\n"
+                    f"  pip install --upgrade datalad\n"
+                    "or\n"
+                    f"  uv lock --upgrade-package datalad\n"
+                    "  uv sync"
+                    )
+            elif available is None:
+                messages.append(package_name)
+
+            # Check for user's SSH script being out of date
+            try:
+                messages.extend(update_renewal_scripts(ssh_folder, VERSION))
+            except Exception as exc:
+                messages.append(str(exc))
+                status_dict.update(
+                    {
+                        'status': 'error',
+                        'exc': exc,
+                        'error_message': (
+                            "Failed updating renewal script(s) "
+                            f"({'\n'.join(messages)})"
+                        ),
+                    })
             else:
-                status_dict['msg'] = (
-                    f"'{bao_binary}' installed externally as {system_bao}, "
-                    "ignoring")
+                if system_bao is None:
+                    success, message = check_for_bao_update(install_dir)
+                    if not success:
+                        status_dict['status'] = 'error'
+                        status_dict['error_message'] = message
+                    else:
+                        messages.append(message)
+                        status_dict['msg'] = '\n'.join(messages)
+                else:
+                    messages.append(
+                        f"bao installed externally "
+                        f"as {system_bao}, ignoring")
+                    status_dict['msg'] = '\n'.join(messages)
+
         else:
             if bao_binary == "":
                 try:
@@ -445,20 +635,20 @@ class bao_setup(Interface):
             # services to collect the password
             no_password_methods = ['oidc', ]
             if config:
+                config['VERSION'] = VERSION
                 bao_username = ui.question(
-                    "USERNAME",
+                    "BAOUSERNAME",
                     default=getpass.getuser(),
                     title=(
-                        "Enter your username for the Datalad service: ")
+                        "Enter your username for the DataLad service: ")
                 )
-                config['USERNAME'] = bao_username
+                config['BAOUSERNAME'] = bao_username
                 if config['BAOAUTH'] in no_password_methods:
                     config['BAOOPENID'] = 1
                 else:
                     config['BAOOPENID'] = 0
                 config['BAOBIN'] = bao_binary
                 ssh_servers = config['RIA_HOSTS'] + config['GIT_SSH_HOSTS']
-                ssh_folder = Path.home() / '.ssh'
                 try:
                     stage = "Checking your .ssh folder"
                     if not ssh_folder.exists():
@@ -474,31 +664,9 @@ class bao_setup(Interface):
                             "Unable to write to your .ssh folder")
                     stage = "Installing renewal script"
                     lgr.info(stage)
-                    ssh_exec = files("datalad_bao_ssh").joinpath(
-                        "openbao_certificate_renew.sh"
-                    )
-                    user_ssh_exec = (
-                        ssh_folder
-                        / f"{config['BAOHOST'].replace('.', '-')}-renew.sh")
-                    skiplines = (
-                        'RIA_HOSTS', 'GIT_REQUIRES_USERNAME',
-                        'GIT_SSH_HOSTS', )
-                    with as_file(ssh_exec) as ssh_exec_path:
-                        with open(ssh_exec_path, 'r') as sshef:
-                            with open(user_ssh_exec, 'w') as usshef:
-                                for line in sshef.readlines():
-                                    if line == '#!/bin/bash\n':
-                                        line = f'#!{shell()}\n'
-                                    else:
-                                        for k, v in config.items():
-                                            if k in skiplines:
-                                                continue
-                                            if f'**{k}**' in line:
-                                                line = line.replace(
-                                                    f'**{k}**', str(v))
-                                    lgr.debug(line)
-                                    usshef.write(line)
-                    os.chmod(user_ssh_exec, 0o700)
+
+                    user_ssh_exec = install_certificate_renewal_script(
+                        ssh_folder, config)
                     stage = (
                         "Building SSH configuration for Bao authenticated"
                         " servers")
@@ -511,7 +679,8 @@ class bao_setup(Interface):
                             f"{config['BAOHOST'].replace('.', '-')}"))
                     ssh_conf_file = (
                         ssh_folder
-                        / f"{config['BAOHOST'].replace('.', '-')}.conf")
+                        / f"datalad-{config['BAOHOST'].replace('.', '-')}.conf"
+                        )
 
                     with open(ssh_conf_file, 'w') as sshcf:
                         for host in ssh_servers:
@@ -534,8 +703,9 @@ class bao_setup(Interface):
 
                     main_ssh_conf = ssh_folder / 'config'
                     include_line = (
-                        "# OpenBao renewals\nInclude"
+                        f"# OpenBao renewals {config['BAOHOST']}\nInclude"
                         f' "{os.path.basename(ssh_conf_file)}"')
+
                     with open(main_ssh_conf, 'r') as msshc:
                         found = include_line in msshc.read()
 

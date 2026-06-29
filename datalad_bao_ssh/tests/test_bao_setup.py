@@ -6,6 +6,7 @@ import os.path
 import pexpect
 import platform
 import pytest
+import requests
 import shutil
 import ssl
 import stat
@@ -18,6 +19,7 @@ import zipfile
 from importlib.metadata import entry_points
 from io import StringIO
 from pytest_httpserver import HTTPServer
+from packaging.version import Version
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -25,6 +27,7 @@ from urllib.parse import urlsplit
 from werkzeug.wrappers import Response
 
 from datalad_bao_ssh.bao_setup import bao_setup
+from datalad_bao_ssh.version import VERSION
 import datalad_bao_ssh
 from datalad.cli.parser import setup_parser
 from datalad.support.exceptions import IncompleteResultsError
@@ -149,7 +152,8 @@ def renew_certificate(
             "BAOAUTH": "ldap" if not openid else 'oidc',
             "BAOOPENID": "1" if openid else "0",
             "BAOBIN": bao,
-            "USERNAME": username,
+            "BAOUSERNAME": username,
+            "VERSION": VERSION
         }
         renew_scripts = {
             'bash': ssh_dir / 'openbao_certificate_renew.bash',
@@ -693,6 +697,337 @@ def test_bad_bao(mock_bao):
         )
 
 
+def test_check_package_update(mocker):
+    response = mocker.Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "info": {
+            "version": "2.0.0"
+        }
+    }
+
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.requests.get',
+        return_value=response
+    )
+
+    assert datalad_bao_ssh.bao_setup.check_package_update(
+        'datalad-extension-bao-ssh', Version('1.0.0')) ==\
+        (
+            True, Version('1.0.0'), Version('2.0.0'),
+            'datalad-extension-bao-ssh')
+
+    assert datalad_bao_ssh.bao_setup.check_package_update(
+        'datalad-extension-bao-ssh', Version('2.0.0')) ==\
+        (
+            False, Version('2.0.0'), Version('2.0.0'),
+            'datalad-extension-bao-ssh')
+
+    assert datalad_bao_ssh.bao_setup.check_package_update(
+        'datalad-extension-bao-ssh', Version('3.0.0')) ==\
+        (
+            False, Version('3.0.0'), Version('2.0.0'),
+            'datalad-extension-bao-ssh')
+
+
+def test_check_package_update_neterr(mocker):
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.requests.get',
+        side_effect=requests.exceptions.RequestException
+    )
+
+    assert datalad_bao_ssh.bao_setup.check_package_update(
+        'datalad-extension-bao-ssh', Version('1.0.0')) ==\
+        (
+            None, Version('1.0.0'), Version('1.0.0'),
+            'Failed to check for update - cannot contact PyPi')
+
+
+def test_check_package_update_jsonerr(mocker):
+    response = mocker.Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "noinfo": {
+            "version": "2.0.0"
+        }
+    }
+
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.requests.get',
+        return_value=response
+    )
+
+    assert datalad_bao_ssh.bao_setup.check_package_update(
+        'datalad-extension-bao-ssh', Version('1.0.0')) ==\
+        (
+            None, Version('1.0.0'), Version('1.0.0'),
+            'Unexpected version information obtained from PyPi')
+
+
+def test_get_config_from_renewal_conf(tmp_path):
+    baosrv = 'bao.domain.com'
+    baofile = baosrv.replace('.', '-')
+    include_file = tmp_path / f'datalad-{baofile}.conf'
+    script_file = tmp_path / f'{baofile}-renew.sh'
+
+    config = {
+        'VERSION': '1.2.3',
+        'ROLE': 'dataladr',
+        'PRINCIPAL': 'dataladp',
+        'CERTTYPE': 'ed25519',
+        'BAOHOST': baosrv,
+        'BAOPORT': '999',
+        'BAOAUTH': 'myauth',
+        'BAOOPENID': '0',
+        'BAOBIN': '/usr/bin/bao',
+        'BAOUSERNAME': 'freddy',
+    }
+    with open(include_file, 'w') as include_cf:
+        include_cf.write(
+            f'''Match host {baosrv} exec "{script_file.name}"
+    IdentitiesOnly yes
+    IdentityFile "id-ed25519-{baofile}"
+    CertificateFile "id-ed25519-{baofile}.crt"
+''')
+
+    with open(script_file, 'w') as scriptf:
+        scriptf.write(
+            f'''#!/bin/bash
+set -euo pipefail
+
+DEBUG="${'{'}DATALAD_BAO_SSH_DEBUG:-0{'}'}"
+CACERT="${'{'}DATALAD_BAO_SSH_CA_CERT:-{'}'}"
+VERSION="{config['VERSION']}"
+ROLE="{config['ROLE']}"
+PRINCIPAL="{config['PRINCIPAL']}"
+CERTTYPE="{config['CERTTYPE']}"
+BAOHOST="{config['BAOHOST']}"
+BAOPORT="{config['BAOPORT']}"
+BAOAUTH="{config['BAOAUTH']}"
+BAOOPENID="{config['BAOOPENID']}"
+BAOBIN="{config['BAOBIN']}"
+BAOUSERNAME="{config['BAOUSERNAME']}"
+
+BAOSRV="https://${'{'}BAOHOST{'}'}:${'{'}BAOPORT{'}'}"
+KEYFILE="id-${'{'}CERTTYPE{'}'}-${'{'}BAOHOST//./-{'}'}"
+PUBFILE="${'{'}KEYFILE{'}'}.pub"
+CERTFILE="${'{'}KEYFILE{'}'}-cert.pub"
+KEY="${'{'}HOME{'}'}/.ssh/${'{'}KEYFILE{'}'}"
+PUB="${'{'}HOME{'}'}/.ssh/${'{'}PUBFILE{'}'}"
+CERT="${'{'}HOME{'}'}/.ssh/${'{'}CERTFILE{'}'}"
+
+## End of configuration ##
+
+''')
+
+    script, captured_config = (
+        datalad_bao_ssh.bao_setup.get_config_from_renewal_conf(
+            include_file)
+    )
+
+    assert script == script_file.name
+    assert config == captured_config
+
+
+def test_get_config_from_renewal_conf_no_match(tmp_path):
+    baosrv = 'bao.domain.com'
+    baofile = baosrv.replace('.', '-')
+    include_file = tmp_path / f'datalad-{baofile}.conf'
+
+    with open(include_file, 'w') as include_cf:
+        include_cf.write('')
+
+    with pytest.raises(
+        datalad_bao_ssh.bao_setup.BaoInstallError,
+        match=f'Include file {include_file} missing Match host statement'
+    ):
+        datalad_bao_ssh.bao_setup.get_config_from_renewal_conf(
+            include_file)
+
+
+def test_update_renewal_scripts_none(tmp_path):
+    with open(tmp_path / 'config', 'w') as main_cf:
+        main_cf.write("")
+
+    with pytest.raises(
+            datalad_bao_ssh.bao_setup.BaoInstallError,
+            match=(
+                "OpenBao doesn't appear to be configured for your DataLad"
+                " servers - please run without the update flag")
+    ):
+        datalad_bao_ssh.bao_setup.update_renewal_scripts(
+            tmp_path, '1.0.0')
+
+
+def test_update_requested_update_renewal_scripts_none(
+        mocker, mock_ui_message):
+
+    cpu = [
+        (False, Version('1.0.0'), Version('1.0.0'),
+            'datalad-extension-bao-ssh'),
+        (False, Version('1.0.0'), Version('1.0.0'),
+            'datalad'),
+    ]
+
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.check_package_update',
+        side_effect=cpu
+    )
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.shutil.which',
+        return_value="/usr/bin/bao"
+    )
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.update_renewal_scripts',
+        side_effect=Exception(
+            "OpenBao doesn't appear to be configured for your DataLad"
+            " servers - please run without the update flag"
+        )
+    )
+
+    with pytest.raises(
+            IncompleteResultsError,
+            match=(
+                "OpenBao doesn't appear to be configured for your "
+                "DataLad servers - please run without the update flag"
+            )):
+        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True)
+
+        assert status == [{
+            'action': 'bao_setup',
+            'error_message': (
+                "Failed updating renewal script(s) (OpenBao doesn't appear "
+                'to be configured for your DataLad servers - please run '
+                'without the update flag)'),
+            'exc': Exception(
+                "OpenBao doesn't appear to be configured for your "
+                "DataLad servers - please run without the update flag"),
+            'status': 'error'}]
+
+
+def test_get_renewal_confs_none(tmp_path):
+    with open(tmp_path / 'config', 'w') as main_cf:
+        main_cf.write("")
+
+    with pytest.raises(
+            datalad_bao_ssh.bao_setup.BaoInstallError,
+            match=(
+                "OpenBao doesn't appear to be configured for your DataLad"
+                " servers - please run without the update flag")
+    ):
+        datalad_bao_ssh.bao_setup.get_renewal_confs(tmp_path)
+
+
+def test_get_renewal_confs_no_includes(tmp_path):
+    with open(tmp_path / 'config', 'w') as main_cf:
+        main_cf.write("# OpenBao renewals \n")
+
+    with pytest.raises(
+            datalad_bao_ssh.bao_setup.BaoInstallError,
+            match=(
+                "OpenBao doesn't appear to be configured correctly for your "
+                "DataLad servers - please run without the update flag")
+    ):
+        datalad_bao_ssh.bao_setup.get_renewal_confs(tmp_path)
+
+
+def test_get_renewal_confs(tmp_path):
+    conf = "datalad-baohost-domain-com.conf"
+    with open(tmp_path / 'config', 'w') as main_cf:
+        main_cf.write(
+            f'''# OpenBao renewals baohost.domain.com
+Include "{conf}"
+''')
+
+    assert (
+        datalad_bao_ssh.bao_setup.get_renewal_confs(tmp_path)
+        == [conf]
+    )
+
+
+def test_get_renewal_confs_multiple(tmp_path):
+    confs = [
+        "datalad-baohost-domain-com.conf",
+        "datalad-baohost2-domain-com.conf"]
+    with open(tmp_path / 'config', 'w') as main_cf:
+        for c in confs:
+            main_cf.write(
+                f'''# OpenBao renewals {
+                    c.replace('datalad-', '').replace('-', '.')}
+Include "{c}"
+''')
+    includes = datalad_bao_ssh.bao_setup.get_renewal_confs(tmp_path)
+    assert includes == confs
+
+
+def test_check_for_renewal_script_update(tmp_path, mocker):
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.shell',
+        return_value='/bin/bash')
+    n_version = '2.0'
+    i_version = '1.0'
+    baosrv = "baoserver.com"
+    server_response = {
+        "ROLE": "datalad-role",
+        "PRINCIPAL": "dataladUsers",
+        "CERTTYPE": "ed25519",
+        "BAOHOST": baosrv,
+        "BAOBIN": '/usr/local/bin/bao',
+        "BAOPORT": "8200",
+        "BAOAUTH": "ldap",
+        "BAOOPENID": "0",
+        "BAOUSERNAME": 'test_user',
+        "VERSION": i_version,
+        "GIT_REQUIRES_USERNAME": False,
+        "GIT_SSH_HOSTS": [
+            "git1.com",
+        ],
+        "RIA_HOSTS": [
+            "ria1.com",
+            "ria2.com"
+        ]
+    }
+    ssh_dir = tmp_path
+    baosuffix = f'{baosrv.replace(".", "-")}'
+    exec_script = ssh_dir / f'{baosuffix}-renew.sh'
+    id_file = f'id-ed25519-{baosuffix}'
+
+    with open(ssh_dir / 'config', 'w') as ssh_conf:
+        ssh_conf.write(
+            f"# OpenBao renewals {baosrv}\nInclude"
+            f' "datalad-{baosuffix}.conf"\n')
+    with open(ssh_dir / f'datalad-{baosuffix}.conf', 'w') as host_conf:
+        host_conf.write(
+            f'''Match host {baosrv} exec "{exec_script}"
+    IdentitiesOnly yes
+    IdentityFile "{id_file}"
+    CertificateFile "{id_file}.crt"
+'''
+        )
+    mod_dir = Path(__file__).parent.parent
+    cscript = ''
+    with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
+        with open(exec_script, 'w') as escript:
+            for line in template.readlines():
+                for k, v in server_response.items():
+                    if f'**{k}**' in line:
+                        line = line.replace(f'**{k}**', v)
+                escript.write(line)
+                cscript += line
+            escript.write("# Meaningless change")
+
+    messages = datalad_bao_ssh.bao_setup.update_renewal_scripts(
+        ssh_dir, n_version)
+    assert messages == [
+        f'Renewal script {os.path.basename(exec_script)} updated '
+        f'to version {n_version}']
+    with open(exec_script) as ascript:
+        actual_script = ascript.read()
+
+    assert actual_script == cscript.replace(
+        f'VERSION="{i_version}"', f'VERSION="{n_version}"')
+
+
 def test_check_for_bao_update(
         mock_bao, mock_github, mocker,
         mock_ui_message):
@@ -759,41 +1094,168 @@ def test_command_visible_to_datalad():
     assert parser is not None
 
 
-def test_update_bao_requested(mocker):
-    sb = mocker.patch(
+@pytest.mark.parametrize(
+    "package_status",
+    [
+        (
+            (
+                '''Update available for this plugin: 1.0.1 -> 1.0.2
+Use your Python package manager to update, e.g.
+  pip install --upgrade datalad-extension-bao-ssh
+or
+  uv lock --upgrade-package datalad-extension-bao-ssh
+  uv sync
+
+Then re-run the updater with
+  datalad bao_setup --update''',
+                True,
+                '1.0.1',
+                '1.0.2',
+                'datalad-extension-bao-ssh',
+            ),
+            (
+                '''Update available for DataLad: 1.0.1 -> 1.0.2
+Use your Python package manager to update, e.g.
+  pip install --upgrade datalad
+or
+  uv lock --upgrade-package datalad
+  uv sync''',
+                True,
+                '1.0.1',
+                '1.0.2',
+                'datalad',
+            ),
+        ),
+        (
+            (
+                '',
+                False,
+                '1.0.1',
+                '1.0.1',
+                'datalad-extension-bao-ssh',
+            ),
+            (
+                '',
+                False,
+                '1.0.1',
+                '1.0.1',
+                'datalad',
+            ),
+        ),
+    ]
+    )
+def test_update_requested_pymods(
+        package_status, mocker, mock_ui_message):
+    returns = [r[1:] for r in package_status]
+    messages = [r[0] for r in package_status if r[0] != '']
+    messages.append(
+        "bao installed externally "
+        "as /usr/bin/bao, ignoring")
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.check_package_update',
+        side_effect=returns
+    )
+    mocker.patch(
         'datalad_bao_ssh.bao_setup.shutil.which',
         return_value="/usr/bin/bao"
     )
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.check_for_bao_update',
+        return_value=(False, "", ))
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.update_renewal_scripts',
+        return_value=[]
+    )
+
+    status = list(datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True))
+    msgs = status[0]['msg']
+
+    assert '\n'.join(messages) == msgs
+
+
+def test_update_requested_check_package_update_neterr(mocker):
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.requests.get',
+        side_effect=requests.exceptions.RequestException
+    )
+
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.shutil.which',
+        return_value="/usr/bin/bao"
+    )
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.check_for_bao_update',
+        return_value=(False, "", ))
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.update_renewal_scripts',
+        return_value=[]
+    )
+
+    status = list(datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True))
+    msgs = status[0]['msg']
+
+    assert msgs == '\n'.join([
+        'Failed to check for update - cannot contact PyPi',
+        'Failed to check for update - cannot contact PyPi',
+        'bao installed externally as /usr/bin/bao, ignoring',
+    ])
+
+
+def test_update_requested_bao(mocker, mock_ui_message):
     cu = mocker.patch(
         'datalad_bao_ssh.bao_setup.check_for_bao_update',
         return_value=(True, "updated", ))
+    cpu_se = [
+            (False, Version('1.0'), Version('1.0'), 'datalad_bao_ssh'),
+            (False, Version('1.0'), Version('1.0'), 'datalad'),
+        ]
+    cpu = mocker.patch(
+        'datalad_bao_ssh.bao_setup.check_package_update',
+        side_effect=cpu_se
+    )
+    mocker.patch(
+        'datalad_bao_ssh.bao_setup.update_renewal_scripts',
+        return_value=[]
+    )
 
     for pfm in ("linux", "windows", ):
         mocker.patch(
             'datalad_bao_ssh.bao_setup.platform.system',
             return_value=pfm)
 
-        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update_bao=True)
         if pfm == "linux":
             exe = 'bao'
         else:
             exe = 'bao.exe'
+        mocker.patch(
+            'datalad_bao_ssh.bao_setup.shutil.which',
+            return_value=f"/usr/bin/{exe}"
+        )
+        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True)
         assert status == [{
             'action': 'bao_setup',
             'status': 'ok',
-            'msg': f"'{exe}' installed externally as /usr/bin/bao, ignoring",
+            'msg': f"bao installed externally as /usr/bin/{exe}, ignoring",
             }]
+        cpu.side_effect = cpu_se
 
-    sb.return_value = None
-    status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update_bao=True)
+    mocker.patch(
+            'datalad_bao_ssh.bao_setup.shutil.which',
+            return_value=None
+    )
+    cpu.side_effect = cpu_se
+
+    status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True)
     assert status == [{
         'action': 'bao_setup',
         'status': 'ok',
         'msg': "updated", }]
 
     cu.return_value = (False, 'Failed', )
+    cpu.side_effect = cpu_se
+
     with pytest.raises(IncompleteResultsError):
-        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update_bao=True)
+        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True)
 
         assert status == [{
             'action': 'bao_setup',
@@ -869,14 +1331,14 @@ Match host git1.com exec "{exec_script}"
     CertificateFile "{certificate_file}"
 
 '''
-    ria_conf_file = ssh_dir / f"{baosuffix}.conf"
+    ria_conf_file = ssh_dir / f"datalad-{baosuffix}.conf"
     assert os.path.exists(ria_conf_file)
     with open(ria_conf_file) as ria_conf:
         actual_config = ria_conf.read()
     assert actual_config == expected_config
 
     include_line = (
-        "# OpenBao renewals\nInclude"
+        f"# OpenBao renewals {baosrv}\nInclude"
         f' "{os.path.basename(ria_conf_file)}"')
     with open(ssh_dir / 'config', 'r') as main_conf:
         found = include_line in main_conf.read()
@@ -887,7 +1349,8 @@ Match host git1.com exec "{exec_script}"
     mod_dir = Path(__file__).parent.parent
     server_response['BAOOPENID'] = "1" if authmethod == 'oidc' else "0"
     server_response['BAOBIN'] = ""
-    server_response['USERNAME'] = ssh_environment['username']
+    server_response['BAOUSERNAME'] = ssh_environment['username']
+    server_response['VERSION'] = VERSION
     with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
         with open(expected_script, 'w') as escript:
             for line in template.readlines():
@@ -1016,14 +1479,14 @@ Match host git1.com exec "{exec_script}"
     User "{ssh_environment['username']}"
 
 '''
-    ria_conf_file = ssh_dir / f"{baosuffix}.conf"
+    ria_conf_file = ssh_dir / f"datalad-{baosuffix}.conf"
     assert os.path.exists(ria_conf_file)
     with open(ria_conf_file) as ria_conf:
         actual_config = ria_conf.read()
     assert actual_config == expected_config
 
     include_line = (
-        "# OpenBao renewals\nInclude"
+        f"# OpenBao renewals {baosrv}\nInclude"
         f' "{os.path.basename(ria_conf_file)}"')
     with open(ssh_dir / 'config', 'r') as main_conf:
         found = include_line in main_conf.read()
@@ -1034,7 +1497,8 @@ Match host git1.com exec "{exec_script}"
     mod_dir = Path(__file__).parent.parent
     server_response['BAOOPENID'] = "0"
     server_response['BAOBIN'] = ""
-    server_response['USERNAME'] = ssh_environment['username']
+    server_response['BAOUSERNAME'] = ssh_environment['username']
+    server_response['VERSION'] = VERSION
     with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
         with open(expected_script, 'w') as escript:
             for line in template.readlines():
@@ -1047,6 +1511,7 @@ Match host git1.com exec "{exec_script}"
                         if f'**{k}**' in line:
                             line = line.replace(f'**{k}**', v)
                 escript.write(line)
+
     assert os.path.exists(ssh_dir / f'{baosuffix}-renew.sh')
     with open(ssh_dir / f'{baosuffix}-renew.sh') as ascript:
         actual_script = ascript.read()
@@ -1108,10 +1573,10 @@ Host myotherhost
         'msg': 'OpenBao certificate renewals configured',
     }]
     baosuffix = f'{baosrv.replace(".", "-")}'
-    ria_conf_file = ssh_dir / f"{baosuffix}.conf"
+    ria_conf_file = ssh_dir / f"datalad-{baosuffix}.conf"
 
     include_line = (
-        "# OpenBao renewals\nInclude"
+        f"# OpenBao renewals {baosrv}\nInclude"
         f' "{os.path.basename(ria_conf_file)}"')
     with open(ssh_config, 'r') as main_conf:
         content = main_conf.read()
@@ -1172,14 +1637,14 @@ Match host git1.com exec "{exec_script}"
     CertificateFile "{certificate_file}"
 
 '''
-    ria_conf_file = ssh_dir / f"{baosuffix}.conf"
+    ria_conf_file = ssh_dir / f"datalad-{baosuffix}.conf"
     assert os.path.exists(ria_conf_file)
     with open(ria_conf_file) as ria_conf:
         actual_config = ria_conf.read()
     assert actual_config == expected_config
 
     include_line = (
-        "# OpenBao renewals\nInclude"
+        f"# OpenBao renewals {baosrv}\nInclude"
         f' "{os.path.basename(ria_conf_file)}"')
     with open(ssh_dir / 'config', 'r') as main_conf:
         found = include_line in main_conf.read()
@@ -1190,7 +1655,8 @@ Match host git1.com exec "{exec_script}"
     mod_dir = Path(__file__).parent.parent
     user_response['BAOOPENID'] = "0"
     user_response['BAOBIN'] = ""
-    user_response['USERNAME'] = ssh_environment['username']
+    user_response['BAOUSERNAME'] = ssh_environment['username']
+    user_response['VERSION'] = VERSION
     with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
         with open(expected_script, 'w') as escript:
             for line in template.readlines():
@@ -1259,7 +1725,7 @@ def test_bao_setup_create_ssh(
         'msg': 'OpenBao certificate renewals configured',
     }]
     baosuffix = f'{baosrv.replace(".", "-")}'
-    ria_conf_file = ssh_dir / f"{baosuffix}.conf"
+    ria_conf_file = ssh_dir / f"datalad-{baosuffix}.conf"
     assert os.path.exists(ria_conf_file)
     assert os.path.exists(ssh_dir / f'{baosuffix}-renew.sh')
     assert os.path.exists(ssh_dir)
@@ -1599,6 +2065,8 @@ def test_existing_certificate(
         child.expect(pexpect.EOF)
         child.close()
         assert child.exitstatus == 0
+        assert f'DataLad OpenBao SSH integration version {VERSION}' in\
+            output[0]
         assert 'Logging into access control server...' in output[0]
         assert 'Success! You are now authenticated.' in output[1]
         assert 'SSH logins enabled until ' in output[1]
@@ -1709,6 +2177,7 @@ def test_renew_certificate_curl_openid(renew_certificate):
 
         assert output.returncode == 1
         assert output.stderr == (
+            f"[DEBUG] DataLad OpenBao SSH integration version {VERSION}\n"
             "[ERROR] Can't find the 'bao' client necessary for logins\n")
 
 

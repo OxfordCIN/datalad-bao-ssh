@@ -3,6 +3,7 @@ set -euo pipefail
 
 DEBUG="${DATALAD_BAO_SSH_DEBUG:-0}"
 CACERT="${DATALAD_BAO_SSH_CA_CERT:-}"
+VERSION="**VERSION**"
 ROLE="**ROLE**"
 PRINCIPAL="**PRINCIPAL**"
 CERTTYPE="**CERTTYPE**"
@@ -11,7 +12,9 @@ BAOPORT="**BAOPORT**"
 BAOAUTH="**BAOAUTH**"
 BAOOPENID="**BAOOPENID**"
 BAOBIN="**BAOBIN**"
-BAOUSERNAME="**USERNAME**"
+BAOUSERNAME="**BAOUSERNAME**"
+
+## End of configuration ##
 
 BAOSRV="https://${BAOHOST}:${BAOPORT}"
 KEYFILE="id-${CERTTYPE}-${BAOHOST//./-}"
@@ -75,6 +78,8 @@ certificate_expiry() {
   ssh-keygen -L -f "$CERT" \
     | awk '/Valid:/ {print $5}'
 }
+
+debug "DataLad OpenBao SSH integration version $VERSION"
 
 if [ -f "$CERT" ]; then
   debug "Found $CERT"

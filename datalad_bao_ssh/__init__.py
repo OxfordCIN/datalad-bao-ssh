@@ -4,7 +4,7 @@ __docformat__ = 'restructuredtext'
 from . import version
 
 import logging
-lgr = logging.getLogger('datalad_bao_ss')
+lgr = logging.getLogger('datalad_bao_ssh')
 
 # Defines a datalad command suite.
 # This variable must be bound as a setuptools entrypoint
