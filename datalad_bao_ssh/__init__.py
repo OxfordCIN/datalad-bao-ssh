@@ -11,7 +11,7 @@ lgr = logging.getLogger('datalad_bao_ssh')
 # to be found by datalad
 command_suite = (
     # description of the command suite, displayed in cmdline help
-    "OpenBao SSH certificates DataLad command suite",
+    "OpenBao SSH logins command suite",
     [
         # specification of a command, any number of commands can be defined
         (
