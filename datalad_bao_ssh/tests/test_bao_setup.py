@@ -740,7 +740,8 @@ def test_check_package_update_neterr(mocker):
         'datalad-extension-bao-ssh', Version('1.0.0')) ==\
         (
             None, Version('1.0.0'), Version('1.0.0'),
-            'Failed to check for update - cannot contact PyPi')
+            'Failed to check for update of datalad-extension-bao-ssh - '
+            'cannot access project URL')
 
 
 def test_check_package_update_jsonerr(mocker):
@@ -761,7 +762,8 @@ def test_check_package_update_jsonerr(mocker):
         'datalad-extension-bao-ssh', Version('1.0.0')) ==\
         (
             None, Version('1.0.0'), Version('1.0.0'),
-            'Unexpected version information obtained from PyPi')
+            'Unexpected version information obtained from PyPi'
+            ' for datalad-extension-bao-ssh')
 
 
 def test_get_config_from_renewal_conf(tmp_path):
@@ -1195,8 +1197,10 @@ def test_update_requested_check_package_update_neterr(mocker):
     msgs = status[0]['msg']
 
     assert msgs == '\n'.join([
-        'Failed to check for update - cannot contact PyPi',
-        'Failed to check for update - cannot contact PyPi',
+        'Failed to check for update of datalad-extension-bao-ssh - '
+        'cannot access project URL',
+        'Failed to check for update of datalad - '
+        'cannot access project URL',
         'bao installed externally as /usr/bin/bao, ignoring',
     ])
 

@@ -29,7 +29,9 @@ log() {
 }
 
 debug() {
-    [[ "$DEBUG" == "1" ]] && log DEBUG "$*"
+    if [[ "$DEBUG" == "1" ]]; then
+      log DEBUG "$*"
+    fi
 }
 
 info() {
@@ -145,9 +147,9 @@ fi
 if [ -n "$BAOBIN" ]; then
   debug "Logging in with bao with method ${BAOAUTH}"
   if [ "$BAOOPENID" = "0" ]; then
-    "$BAOBIN" login -method="${BAOAUTH}" username="$username"
+    "$BAOBIN" login -method="${BAOAUTH}" username="$username" </dev/tty
   else
-    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}"
+    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}" </dev/tty
   fi
   trap remove_token EXIT INT TERM
 else

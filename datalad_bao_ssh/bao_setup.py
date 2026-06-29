@@ -47,7 +47,7 @@ register_config(
     name="datalad.bao-ssh-config-url",
     title="URL of configuration server to attempt auto-configuration from",
     type=str,
-    default="https://neurodata.fmrib.ox.ac.uk/bao_conf/openbao_ssh.json",
+    default="https://neurodata.fmrib.ox.ac.uk/bao_config/openbao_ssh.json",
     description="This URL, if contactable, will return a JSON configuration"
     " that will be used to automatically configure the client. If it cannot"
     " be contacted, the user will be prompted for option values",
@@ -59,7 +59,7 @@ register_config(
     title="Directory to install 'bao' command in",
     type=str,
     default=Path.home() / ".baobin",
-    description="Where the bao command is not installed system-wide, where"
+    description="If the bao command is not installed system-wide, where"
     " to install the script",
     scope="global"
 )
@@ -496,11 +496,12 @@ def check_package_update(package: str, current: Version) ->\
         # Network/server problem. Ignore.
         return (
             None, current, current,
-            "Failed to check for update - cannot contact PyPi")
+            f"Failed to check for update of {package} "
+            "- cannot access project URL")
     except (KeyError, ValueError):
         return (
             None, current, current,
-            "Unexpected version information obtained from PyPi"
+            f"Unexpected version information obtained from PyPi for {package}"
         )
     return (latest > current, current, latest, package, )
 
@@ -538,8 +539,7 @@ class bao_setup(Interface):
     def __call__(update=False):
         status_dict = {'action': 'bao_setup', 'status': 'ok'}
         ui.message(f"DataLad OpenBao SSH certificate integration ({VERSION})")
-
-        install_dir = dlcfg.get("datalad.bao-ssh-bao-install-dir")
+        install_dir = dlcfg.obtain("datalad.bao-ssh-bao-install-dir")
         system_bao = shutil.which("bao")
         ssh_folder = Path.home() / '.ssh'
 
@@ -571,7 +571,7 @@ class bao_setup(Interface):
 
             # Check for updates to DataLad
             available, current, latest, package_name = check_package_update(
-                'datalad', version("datalad"))
+                'datalad', Version(version("datalad")))
             if available:
                 messages.append(
                     f"Update available for DataLad: {current} -> {latest}\n"
@@ -624,7 +624,7 @@ class bao_setup(Interface):
             lgr.info("Attempting to download configuration")
             try:
                 r = session.get(
-                    dlcfg.get("datalad.bao-ssh-config-url"),
+                    dlcfg.obtain("datalad.bao-ssh-config-url"),
                     timeout=10
                 )
                 config = r.json()
