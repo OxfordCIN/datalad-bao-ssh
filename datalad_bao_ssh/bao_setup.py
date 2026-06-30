@@ -381,6 +381,15 @@ def get_renewal_confs(ssh_folder: Path) -> list[str]:
     return confs
 
 
+def get_config(url):
+    session = requests.Session()
+    r = session.get(
+        url,
+        timeout=10
+    )
+    return r.json()
+
+
 def get_config_from_renewal_conf(conf: Path) -> tuple[Path, dict]:
     config_keys = (
         'VERSION',
@@ -596,14 +605,9 @@ class bao_setup(Interface):
                 except BaoInstallError:
                     bao_binary = ""
 
-            session = requests.Session()
-            lgr.info("Attempting to download configuration")
             try:
-                r = session.get(
-                    dlcfg.obtain("datalad.bao-ssh-config-url"),
-                    timeout=10
-                )
-                config = r.json()
+                lgr.info("Attempting to download configuration")
+                config = get_config(dlcfg.obtain("datalad.bao-ssh-config-url"))
             except Exception:
                 config = prompt_for_config()
 
