@@ -589,13 +589,14 @@ class bao_setup(Interface):
                 messages.extend(update_renewal_scripts(ssh_folder, VERSION))
             except Exception as exc:
                 messages.append(str(exc))
+                mess_str = '\n'.join(messages)
                 status_dict.update(
                     {
                         'status': 'error',
                         'exc': exc,
                         'error_message': (
                             "Failed updating renewal script(s) "
-                            f"({'\n'.join(messages)})"
+                            f"({mess_str})"
                         ),
                     })
             else:
