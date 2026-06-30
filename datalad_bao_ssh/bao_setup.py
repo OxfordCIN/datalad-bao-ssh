@@ -47,7 +47,7 @@ class BaoInstallError(Exception):
     pass
 
 
-def safe_extract_zip(zip_file: Path, path: Path):
+def safe_extract_zip(zip_file: zipfile.ZipFile, path: Path):
     abs_path = os.path.abspath(path)
     for member in zip_file.namelist():
         member_path = os.path.abspath(os.path.join(path, member))
@@ -56,7 +56,7 @@ def safe_extract_zip(zip_file: Path, path: Path):
     zip_file.extractall(path)
 
 
-def safe_extract_tar(tar_file: Path, path: Path):
+def safe_extract_tar(tar_file: tarfile.TarFile, path: Path):
     if 'filter' in inspect.signature(tar_file.extractall).parameters:
         tar_file.extractall(path, filter='data')
     else:
