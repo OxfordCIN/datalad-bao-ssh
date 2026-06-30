@@ -1444,7 +1444,7 @@ def test_bao_setup_gituser(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.obtain",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1555,7 +1555,7 @@ def test_bao_setup_existing_config(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.obtain",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1606,7 +1606,7 @@ def test_bao_setup_bad_dns(
     user_response = ssh_environment['user_response']
     baosrv = user_response['BAOHOST']
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.obtain",
         return_value=(
             "http://test.invalid/ssh_conf.json')}")
     )
@@ -1715,7 +1715,7 @@ def test_bao_setup_create_ssh(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.obtain",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
