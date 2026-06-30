@@ -14,6 +14,7 @@ import subprocess as sp
 import tarfile
 import time
 import trustme
+import truststore
 import zipfile
 
 from importlib.metadata import entry_points
@@ -2238,3 +2239,11 @@ def test_existing_certificate_curl(httpserver, tmp_path, renew_certificate):
 
         assert output.returncode == 0
         assert 'Logging into access control server...' not in output.stderr
+
+
+# Must be run last to avoid breaking other TLS tests
+def test_tls_certs():
+    truststore.inject_into_ssl()
+    requests.get(
+        "https://www.google.com"
+    )

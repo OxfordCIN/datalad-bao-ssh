@@ -35,6 +35,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import truststore
 import zipfile
 
 
@@ -536,8 +537,7 @@ class bao_setup(Interface):
     @eval_results
     # signature must match parameter list above
     # additional generic arguments are added by decorators
-    def __call__(update=False):
-        status_dict = {'action': 'bao_setup', 'status': 'ok'}
+        truststore.inject_into_ssl()
         ui.message(f"DataLad OpenBao SSH certificate integration ({VERSION})")
         install_dir = dlcfg.obtain("datalad.bao-ssh-bao-install-dir")
         system_bao = shutil.which("bao")
