@@ -135,7 +135,8 @@ def bao_available(
     return release
 
 
-def install_bao(install_dir: Path, release: dict = bao_available()) -> str:
+def install_bao(install_dir: Path | str, release: dict = bao_available())\
+       -> str:
     ui.message(
             f"Attempting to install Openbao client 'bao' into {install_dir}"
         )
