@@ -980,7 +980,7 @@ def test_check_for_renewal_script_update(tmp_path, mocker):
         "BAOAUTH": "ldap",
         "BAOOPENID": "0",
         "BAOUSERNAME": 'test_user',
-        "VERSION": i_version,
+        "VERSION": str(i_version),
         "GIT_REQUIRES_USERNAME": False,
         "GIT_SSH_HOSTS": [
             "git1.com",
