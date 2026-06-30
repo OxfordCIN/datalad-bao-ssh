@@ -9,7 +9,6 @@ from packaging.version import Version
 from pathlib import Path
 
 from datalad import cfg as dlcfg
-from datalad.distribution.dataset import datasetmethod
 from datalad.interface.base import (Interface, build_doc, eval_results)
 from datalad.interface.results import get_status_dict
 from datalad.support.param import Parameter
