@@ -38,8 +38,7 @@ test:
   script:
     - apt-get -y update
     - apt-get -y install zsh jq curl bash
-    - pip install pytest pytest-cov pytest-mock pytest-httpserver pexpect trustme
-    - pip install .
+    - pip install ".[test]"
     - export SHELL=/bin/bash
     - python -m pytest
 
