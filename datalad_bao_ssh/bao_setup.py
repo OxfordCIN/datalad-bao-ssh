@@ -517,7 +517,7 @@ class bao_setup(Interface):
         install_dir = dlcfg.obtain("datalad.bao-ssh-bao-install-dir")
         system_bao = shutil.which("bao")
         ssh_folder = Path.home() / '.ssh'
-
+        stage = "Initialisation"
         if system_bao is not None:
             system = platform.system().lower()
             bao_binary = (
