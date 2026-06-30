@@ -4,9 +4,10 @@ from __future__ import annotations
 __docformat__ = 'restructuredtext'
 
 from importlib.resources import as_file, files
-from importlib.metadata import (packages_distributions, version)
+from importlib.metadata import (version)
 from packaging.version import Version
 from pathlib import Path
+from typing import Any, Generator
 
 from datalad import cfg as dlcfg
 from datalad.interface.base import (Interface, build_doc, eval_results)
@@ -210,11 +211,11 @@ def install_bao(install_dir: Path, release: dict = bao_available()) -> str:
 
             verifier = Verifier.production()
             try:
-                with archive_path.open("rb") as artifact_file:
-                    verifier.verify_artifact(
-                        input_=artifact_file,
-                        bundle=bundle,
-                        policy=expected_identity)
+                input_bytes = archive_path.read_bytes()
+                verifier.verify_artifact(
+                    input_=input_bytes,
+                    bundle=bundle,
+                    policy=expected_identity)
             except VerificationError:
                 raise BaoInstallError("Download failed verification")
 
@@ -424,7 +425,7 @@ def get_config_from_renewal_conf(conf: Path) -> tuple[Path, dict]:
                         config[k] = line.split('=')[1].strip('\n').\
                             strip('"').strip("'")
             lgr.debug(line)
-    return script, config
+    return Path(script), config
 
 
 def install_certificate_renewal_script(
@@ -520,7 +521,9 @@ class bao_setup(Interface):
     @eval_results
     # signature must match parameter list above
     # additional generic arguments are added by decorators
+    def __call__(update: bool = False) -> Generator[dict[str, Any], None, None]:  # pyright: ignore[reportIncompatibleMethodOverride] # noqa 503
         truststore.inject_into_ssl()
+        status_dict: dict[str, Any] = {'action': 'bao_setup', 'status': 'ok'}
         ui.message(f"DataLad OpenBao SSH certificate integration ({VERSION})")
         install_dir = dlcfg.obtain("datalad.bao-ssh-bao-install-dir")
         system_bao = shutil.which("bao")
@@ -536,7 +539,7 @@ class bao_setup(Interface):
             messages = []
             # Check for updates to this package
             available, current, latest, package_name = check_package_update(
-                packages_distributions()[__package__][0], Version(VERSION))
+                'datalad-extension-bao-ssh', Version(VERSION))
             if available:
                 messages.append(
                     f"Update available for this plugin: {current} ->"
@@ -569,7 +572,8 @@ class bao_setup(Interface):
 
             # Check for user's SSH script being out of date
             try:
-                messages.extend(update_renewal_scripts(ssh_folder, VERSION))
+                messages.extend(update_renewal_scripts(
+                    ssh_folder, Version(VERSION)))
             except Exception as exc:
                 messages.append(str(exc))
                 mess_str = '\n'.join(messages)
