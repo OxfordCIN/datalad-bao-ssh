@@ -11,7 +11,7 @@ stages:
 
 style:
   stage: style
-  image: python:3.12
+  image: python:3.14
   tags:
     - docker
   script:
@@ -27,7 +27,7 @@ style:
     - docker
   parallel:
     matrix:
-     - PYVER: ["3.10", "3.11", "3.12", "3.13"]
+     - PYVER: ["3.10", "3.11", "3.12", "3.13", "3.14"]
   image: python:$PYVER
   except:
     - tags
@@ -47,7 +47,7 @@ test:
 build-pypi-dist:
 
   stage: build
-  image: python:3.12
+  image: python:3.14
 
   tags:
     - docker
@@ -82,7 +82,7 @@ deploy-pypi-dist:
   stage: deploy
   only:
     - tags
-  image: python:3.12
+  image: python:3.14
   when:  manual
 
   tags:
