@@ -23,13 +23,13 @@ from pytest_httpserver import HTTPServer
 from packaging.version import Version
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock
 from urllib.parse import urlsplit
 from werkzeug.wrappers import Response
 
-from datalad_bao_ssh.bao_setup import bao_setup
 from datalad_bao_ssh.version import VERSION
-import datalad_bao_ssh
+from datalad_bao_ssh import bao_setup
 from datalad.cli.parser import setup_parser
 from datalad.support.exceptions import IncompleteResultsError
 
@@ -67,7 +67,7 @@ def requests_ca_bundle(monkeypatch, ca):
 
 @pytest.fixture
 def bao(tmp_path, monkeypatch):
-    bao_script = datalad_bao_ssh.bao_setup.install_bao(tmp_path)
+    bao_script = bao_setup.install_bao(tmp_path)
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
     return bao_script
 
@@ -80,7 +80,7 @@ def mock_bao(mocker, tmp_path):
     shutil.copy(test_bao_script, bao_script)
     os.chmod(bao_script, 0o755)
     which = mocker.patch(
-        "datalad_bao_ssh.bao_setup.shutil.which",
+        "bao_setup.shutil.which",
         return_value=str(bao_script))
     return {
         'which': which,
@@ -91,11 +91,11 @@ def mock_bao(mocker, tmp_path):
 @pytest.fixture
 def mock_no_bao(mocker):
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.shutil.which",
+        "bao_setup.shutil.which",
         return_value=None)
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.install_bao",
-        side_effect=datalad_bao_ssh.bao_setup.BaoInstallError()
+        "bao_setup.install_bao",
+        side_effect=bao_setup.BaoInstallError()
     )
 
 
@@ -108,7 +108,7 @@ def datalad_ui(mocker):
             question=Mock(side_effect=questions)
         )
         ui = mocker.patch(
-            "datalad_bao_ssh.bao_setup.ui",
+            "bao_setup.ui",
             fake_ui
         )
         return ui
@@ -266,10 +266,10 @@ def ssh_environment(tmp_path, mocker, datalad_ui):
     )
     patches = {
         "Path.home": mocker.patch(
-            "datalad_bao_ssh.bao_setup.Path.home",
+            "bao_setup.Path.home",
             return_value=Path(tmp_path)),
         "ui": mocker.patch(
-            "datalad_bao_ssh.bao_setup.ui",
+            "bao_setup.ui",
             fake_ui),
     }
 
@@ -315,7 +315,7 @@ def mock_github(
         if no_sig:
             server_response['assets'].pop(-1)
         monkeypatch.setattr(
-            "datalad_bao_ssh.bao_setup.certifi.where", lambda: ca_cert_path)
+            "bao_setup.certifi.where", lambda: ca_cert_path)
 
         if not fail:
             httpserver.expect_request(
@@ -394,7 +394,7 @@ def test_safe_extract_zip_extracts_files(tmp_path: Path):
     zip_file = make_zip({"good.txt": b"hello"})
     outdir = tmp_path / "out"
 
-    datalad_bao_ssh.bao_setup.safe_extract_zip(zip_file, outdir)
+    bao_setup.safe_extract_zip(zip_file, outdir)
 
     assert (outdir / "good.txt").read_text() == "hello"
 
@@ -404,9 +404,9 @@ def test_safe_extract_zip_rejects_traversal(tmp_path: Path):
     outdir = tmp_path / "out"
 
     with pytest.raises(
-            datalad_bao_ssh.bao_setup.BaoInstallError,
+            bao_setup.BaoInstallError,
             match="Unsafe zip entry: ../evil.txt"):
-        datalad_bao_ssh.bao_setup.safe_extract_zip(zip_file, outdir)
+        bao_setup.safe_extract_zip(zip_file, outdir)
 
 
 def test_safe_extract_tar_uses_filter_when_supported(
@@ -425,7 +425,7 @@ def test_safe_extract_tar_uses_filter_when_supported(
     tar_file = TarWithFilter()
     outdir = tmp_path / "out"
 
-    datalad_bao_ssh.bao_setup.safe_extract_tar(tar_file, outdir)
+    bao_setup.safe_extract_tar(cast(tarfile.TarFile, tar_file), outdir)
 
     assert tar_file.called == (outdir, "data")
 
@@ -446,7 +446,7 @@ def test_safe_extract_tar_fallback_extracts_files(
         parameters = {}
 
     monkeypatch.setattr(
-        datalad_bao_ssh.bao_setup.inspect,
+        bao_setup.inspect,
         "signature",
         lambda _func: FakeSignature()
     )
@@ -455,7 +455,7 @@ def test_safe_extract_tar_fallback_extracts_files(
     outdir.mkdir()
 
     tar_file = FakeTar()
-    datalad_bao_ssh.bao_setup.safe_extract_tar(tar_file, outdir)
+    bao_setup.safe_extract_tar(cast(tarfile.TarFile, tar_file), outdir)
 
     assert extracted["path"] == outdir
     assert (outdir / "good.txt").read_text() == "hello"
@@ -477,16 +477,16 @@ def test_safe_extract_tar_fallback_rejects_traversal(
         parameters = {}
 
     monkeypatch.setattr(
-        datalad_bao_ssh.bao_setup.inspect,
+        bao_setup.inspect,
         "signature", lambda _func: FakeSignature())
 
     tar_file = FakeTar()
     outdir = tmp_path / "out"
 
     with pytest.raises(
-            datalad_bao_ssh.bao_setup.BaoInstallError,
+            bao_setup.BaoInstallError,
             match="Unsafe tar entry: ../evil.txt"):
-        datalad_bao_ssh.bao_setup.safe_extract_tar(tar_file, outdir)
+        bao_setup.safe_extract_tar(cast(tarfile.TarFile, tar_file), outdir)
 
     assert not tar_file.extractall_called
 
@@ -513,11 +513,11 @@ def test_install_bao(
         mock_ui_message, mock_github, mocker,
         monkeypatch, httpserver):
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.platform.system',
+        'bao_setup.platform.system',
         return_value=system)
 
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.platform.machine',
+        'bao_setup.platform.machine',
         return_value=machine)
     no_sig = True if special == 'nosig' else False
     gh = mock_github(
@@ -525,24 +525,24 @@ def test_install_bao(
     if special == 'missing':
         gh['server_response']['assets'][0]['name'] = 'nothing'
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.bao_available',
+        'bao_setup.bao_available',
         return_value=gh['server_response']
     )
     if special == 'noverify':
         fake_verifier = SimpleNamespace(
             verify_artifact=Mock(
-                side_effect=datalad_bao_ssh.bao_setup.VerificationError)
+                side_effect=bao_setup.VerificationError)
         )
     else:
         fake_verifier = SimpleNamespace(
             verify_artifact=Mock()
         )
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.Verifier.production',
+        'bao_setup.Verifier.production',
         Mock(return_value=fake_verifier)
     )
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.Bundle.from_json',
+        'bao_setup.Bundle.from_json',
         return_value="{'bundle': 'signature', }")
     version = '1.2.3'
     fname = f"bao_{version}_{system}_{machine}{ext}"
@@ -580,41 +580,41 @@ def test_install_bao(
     install_dir = tmp_path / 'install_dir'
     if system == 'FreeBSD':
         with pytest.raises(
-                datalad_bao_ssh.bao_setup.BaoInstallError,
+                bao_setup.BaoInstallError,
                 match=f"Unsupported OS: {system.lower()}"):
-            datalad_bao_ssh.bao_setup.install_bao(
+            bao_setup.install_bao(
                 install_dir=install_dir,
                 release=gh['server_response']
             )
     elif machine == 'ppc64':
         with pytest.raises(
-                datalad_bao_ssh.bao_setup.BaoInstallError,
+                bao_setup.BaoInstallError,
                 match=f"Unrecognised architecture {machine}"):
-            datalad_bao_ssh.bao_setup.install_bao(
+            bao_setup.install_bao(
                 install_dir=install_dir,
                 release=gh['server_response']
             )
     elif special == 'nosig':
         with pytest.raises(
-                datalad_bao_ssh.bao_setup.BaoInstallError,
+                bao_setup.BaoInstallError,
                 match="Could not find a signature for this release"):
-            datalad_bao_ssh.bao_setup.install_bao(
+            bao_setup.install_bao(
                 install_dir=install_dir,
                 release=gh['server_response']
             )
     elif special == 'noverify':
         with pytest.raises(
-                datalad_bao_ssh.bao_setup.BaoInstallError,
+                bao_setup.BaoInstallError,
                 match="Download failed verification"):
-            datalad_bao_ssh.bao_setup.install_bao(
+            bao_setup.install_bao(
                 install_dir=install_dir,
                 release=gh['server_response']
             )
     elif special == 'missing':
         with pytest.raises(
-                datalad_bao_ssh.bao_setup.BaoInstallError,
+                bao_setup.BaoInstallError,
                 match="Could not find a release for this OS"):
-            datalad_bao_ssh.bao_setup.install_bao(
+            bao_setup.install_bao(
                 install_dir=install_dir,
                 release=gh['server_response']
             )
@@ -624,7 +624,7 @@ def test_install_bao(
         else:
             idir = install_dir
         if special == 'nofilter':
-            real_open = datalad_bao_ssh.bao_setup.tarfile.open
+            real_open = bao_setup.tarfile.open
 
             def fake_open(*args, **kwargs):
                 real_tar = real_open(*args, **kwargs)
@@ -632,9 +632,9 @@ def test_install_bao(
 
             # patch where your code looks up tarfile.open
             monkeypatch.setattr(
-                datalad_bao_ssh.bao_setup.tarfile,
+                bao_setup.tarfile,
                 "open", fake_open)
-        datalad_bao_ssh.bao_setup.install_bao(
+        bao_setup.install_bao(
             install_dir=idir,
             release=gh['server_response']
         )
@@ -670,12 +670,12 @@ def test_bao_version(tmp_path):
 echo "OpenBao v1.2.3"
 ''')
     os.chmod(bao_bin, 0o755)
-    assert datalad_bao_ssh.bao_setup.bao_version(install_dir) == '1.2.3'
+    assert bao_setup.bao_version(install_dir) == '1.2.3'
 
 
 def test_bao_available(mock_github):
     gh = mock_github()
-    assert datalad_bao_ssh.bao_setup.bao_available(
+    assert bao_setup.bao_available(
         release_url=gh['url'])['tag_name'] == 'v1.2.4'
 
 
@@ -684,16 +684,16 @@ def test_bao_available(mock_github):
 )
 def test_bao_available_exception(failure, mock_github):
     gh = mock_github(fail=failure)
-    with pytest.raises(datalad_bao_ssh.bao_setup.BaoInstallError):
-        datalad_bao_ssh.bao_setup.bao_available(
+    with pytest.raises(bao_setup.BaoInstallError):
+        bao_setup.bao_available(
             release_url=gh['url'])
 
 
 def test_bad_bao(mock_bao):
     os.chmod(str(mock_bao['script']), 0o644)
     with pytest.raises(
-            datalad_bao_ssh.bao_setup.BaoInstallError):
-        datalad_bao_ssh.bao_setup.bao_version(
+            bao_setup.BaoInstallError):
+        bao_setup.bao_version(
             Path(mock_bao['script']).parent
         )
 
@@ -708,23 +708,23 @@ def test_check_package_update(mocker):
     }
 
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.requests.get',
+        'bao_setup.requests.get',
         return_value=response
     )
 
-    assert datalad_bao_ssh.bao_setup.check_package_update(
+    assert bao_setup.check_package_update(
         'datalad-extension-bao-ssh', Version('1.0.0')) ==\
         (
             True, Version('1.0.0'), Version('2.0.0'),
             'datalad-extension-bao-ssh')
 
-    assert datalad_bao_ssh.bao_setup.check_package_update(
+    assert bao_setup.check_package_update(
         'datalad-extension-bao-ssh', Version('2.0.0')) ==\
         (
             False, Version('2.0.0'), Version('2.0.0'),
             'datalad-extension-bao-ssh')
 
-    assert datalad_bao_ssh.bao_setup.check_package_update(
+    assert bao_setup.check_package_update(
         'datalad-extension-bao-ssh', Version('3.0.0')) ==\
         (
             False, Version('3.0.0'), Version('2.0.0'),
@@ -733,11 +733,11 @@ def test_check_package_update(mocker):
 
 def test_check_package_update_neterr(mocker):
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.requests.get',
+        'bao_setup.requests.get',
         side_effect=requests.exceptions.RequestException
     )
 
-    assert datalad_bao_ssh.bao_setup.check_package_update(
+    assert bao_setup.check_package_update(
         'datalad-extension-bao-ssh', Version('1.0.0')) ==\
         (
             None, Version('1.0.0'), Version('1.0.0'),
@@ -755,11 +755,11 @@ def test_check_package_update_jsonerr(mocker):
     }
 
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.requests.get',
+        'bao_setup.requests.get',
         return_value=response
     )
 
-    assert datalad_bao_ssh.bao_setup.check_package_update(
+    assert bao_setup.check_package_update(
         'datalad-extension-bao-ssh', Version('1.0.0')) ==\
         (
             None, Version('1.0.0'), Version('1.0.0'),
@@ -824,11 +824,11 @@ CERT="${'{'}HOME{'}'}/.ssh/${'{'}CERTFILE{'}'}"
 ''')
 
     script, captured_config = (
-        datalad_bao_ssh.bao_setup.get_config_from_renewal_conf(
+        bao_setup.get_config_from_renewal_conf(
             include_file)
     )
 
-    assert script == script_file.name
+    assert str(script) == script_file.name
     assert config == captured_config
 
 
@@ -841,10 +841,10 @@ def test_get_config_from_renewal_conf_no_match(tmp_path):
         include_cf.write('')
 
     with pytest.raises(
-        datalad_bao_ssh.bao_setup.BaoInstallError,
+        bao_setup.BaoInstallError,
         match=f'Include file {include_file} missing Match host statement'
     ):
-        datalad_bao_ssh.bao_setup.get_config_from_renewal_conf(
+        bao_setup.get_config_from_renewal_conf(
             include_file)
 
 
@@ -853,13 +853,13 @@ def test_update_renewal_scripts_none(tmp_path):
         main_cf.write("")
 
     with pytest.raises(
-            datalad_bao_ssh.bao_setup.BaoInstallError,
+            bao_setup.BaoInstallError,
             match=(
                 "OpenBao doesn't appear to be configured for your DataLad"
                 " servers - please run without the update flag")
     ):
-        datalad_bao_ssh.bao_setup.update_renewal_scripts(
-            tmp_path, '1.0.0')
+        bao_setup.update_renewal_scripts(
+            tmp_path, Version('1.0.0'))
 
 
 def test_update_requested_update_renewal_scripts_none(
@@ -873,15 +873,15 @@ def test_update_requested_update_renewal_scripts_none(
     ]
 
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.check_package_update',
+        'bao_setup.check_package_update',
         side_effect=cpu
     )
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.shutil.which',
+        'bao_setup.shutil.which',
         return_value="/usr/bin/bao"
     )
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.update_renewal_scripts',
+        'bao_setup.update_renewal_scripts',
         side_effect=Exception(
             "OpenBao doesn't appear to be configured for your DataLad"
             " servers - please run without the update flag"
@@ -894,7 +894,7 @@ def test_update_requested_update_renewal_scripts_none(
                 "OpenBao doesn't appear to be configured for your "
                 "DataLad servers - please run without the update flag"
             )):
-        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True)
+        status = bao_setup.bao_setup.__call__(update=True)
 
         assert status == [{
             'action': 'bao_setup',
@@ -913,12 +913,12 @@ def test_get_renewal_confs_none(tmp_path):
         main_cf.write("")
 
     with pytest.raises(
-            datalad_bao_ssh.bao_setup.BaoInstallError,
+            bao_setup.BaoInstallError,
             match=(
                 "OpenBao doesn't appear to be configured for your DataLad"
                 " servers - please run without the update flag")
     ):
-        datalad_bao_ssh.bao_setup.get_renewal_confs(tmp_path)
+        bao_setup.get_renewal_confs(tmp_path)
 
 
 def test_get_renewal_confs_no_includes(tmp_path):
@@ -926,12 +926,12 @@ def test_get_renewal_confs_no_includes(tmp_path):
         main_cf.write("# OpenBao renewals \n")
 
     with pytest.raises(
-            datalad_bao_ssh.bao_setup.BaoInstallError,
+            bao_setup.BaoInstallError,
             match=(
                 "OpenBao doesn't appear to be configured correctly for your "
                 "DataLad servers - please run without the update flag")
     ):
-        datalad_bao_ssh.bao_setup.get_renewal_confs(tmp_path)
+        bao_setup.get_renewal_confs(tmp_path)
 
 
 def test_get_renewal_confs(tmp_path):
@@ -943,7 +943,7 @@ Include "{conf}"
 ''')
 
     assert (
-        datalad_bao_ssh.bao_setup.get_renewal_confs(tmp_path)
+        bao_setup.get_renewal_confs(tmp_path)
         == [conf]
     )
 
@@ -959,16 +959,16 @@ def test_get_renewal_confs_multiple(tmp_path):
                     c.replace('datalad-', '').replace('-', '.')}
 Include "{c}"
 ''')
-    includes = datalad_bao_ssh.bao_setup.get_renewal_confs(tmp_path)
+    includes = bao_setup.get_renewal_confs(tmp_path)
     assert includes == confs
 
 
 def test_check_for_renewal_script_update(tmp_path, mocker):
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.shell',
+        'bao_setup.shell',
         return_value='/bin/bash')
-    n_version = '2.0'
-    i_version = '1.0'
+    n_version = Version('2.0')
+    i_version = Version('1.0')
     baosrv = "baoserver.com"
     server_response = {
         "ROLE": "datalad-role",
@@ -1019,7 +1019,7 @@ def test_check_for_renewal_script_update(tmp_path, mocker):
                 cscript += line
             escript.write("# Meaningless change")
 
-    messages = datalad_bao_ssh.bao_setup.update_renewal_scripts(
+    messages = bao_setup.update_renewal_scripts(
         ssh_dir, n_version)
     assert messages == [
         f'Renewal script {os.path.basename(exec_script)} updated '
@@ -1036,24 +1036,24 @@ def test_check_for_bao_update(
         mock_ui_message):
     gh = mock_github()
     ib = mocker.patch(
-        'datalad_bao_ssh.bao_setup.install_bao')
+        'bao_setup.install_bao')
     bv = mocker.patch(
-        'datalad_bao_ssh.bao_setup.bao_version',
+        'bao_setup.bao_version',
         return_value='1.2.3'
     )
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.bao_available',
+        'bao_setup.bao_available',
         return_value=gh['server_response']
     )
     bao_bin = Path(mock_bao['script'])
-    assert datalad_bao_ssh.bao_setup.check_for_bao_update(
+    assert bao_setup.check_for_bao_update(
         bao_bin.parent) == (True, "'bao' upgraded to 1.2.4", )
     ib.assert_called_once()
 
     bv.reset_mock()
     ib.reset_mock()
     bv.return_value = None
-    assert datalad_bao_ssh.bao_setup.check_for_bao_update(
+    assert bao_setup.check_for_bao_update(
         bao_bin.parent) == (
             False,
             "'bao' is not installed - re-run without check"
@@ -1063,16 +1063,16 @@ def test_check_for_bao_update(
     bv.reset_mock()
     bv.return_value = '1.2.3'
     ib.reset_mock()
-    ib.side_effect = datalad_bao_ssh.bao_setup.BaoInstallError(
+    ib.side_effect = bao_setup.BaoInstallError(
         'Install failure')
-    assert datalad_bao_ssh.bao_setup.check_for_bao_update(
+    assert bao_setup.check_for_bao_update(
         bao_bin.parent) == (False, "Install failure", )
 
     bv.reset_mock()
     bv.return_value = '1.2.4'
     ib.reset_mock()
     ib.side_effect = None
-    assert datalad_bao_ssh.bao_setup.check_for_bao_update(
+    assert bao_setup.check_for_bao_update(
         bao_bin.parent) == (True, "'bao' is latest version", )
 
 
@@ -1155,22 +1155,22 @@ def test_update_requested_pymods(
         "bao installed externally "
         "as /usr/bin/bao, ignoring")
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.check_package_update',
+        'bao_setup.check_package_update',
         side_effect=returns
     )
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.shutil.which',
+        'bao_setup.shutil.which',
         return_value="/usr/bin/bao"
     )
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.check_for_bao_update',
+        'bao_setup.check_for_bao_update',
         return_value=(False, "", ))
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.update_renewal_scripts',
+        'bao_setup.update_renewal_scripts',
         return_value=[]
     )
 
-    status = list(datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True))
+    status = list(bao_setup.bao_setup.__call__(update=True))
     msgs = status[0]['msg']
 
     assert '\n'.join(messages) == msgs
@@ -1178,23 +1178,23 @@ def test_update_requested_pymods(
 
 def test_update_requested_check_package_update_neterr(mocker):
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.requests.get',
+        'bao_setup.requests.get',
         side_effect=requests.exceptions.RequestException
     )
 
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.shutil.which',
+        'bao_setup.shutil.which',
         return_value="/usr/bin/bao"
     )
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.check_for_bao_update',
+        'bao_setup.check_for_bao_update',
         return_value=(False, "", ))
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.update_renewal_scripts',
+        'bao_setup.update_renewal_scripts',
         return_value=[]
     )
 
-    status = list(datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True))
+    status = list(bao_setup.bao_setup.__call__(update=True))
     msgs = status[0]['msg']
 
     assert msgs == '\n'.join([
@@ -1208,24 +1208,24 @@ def test_update_requested_check_package_update_neterr(mocker):
 
 def test_update_requested_bao(mocker, mock_ui_message):
     cu = mocker.patch(
-        'datalad_bao_ssh.bao_setup.check_for_bao_update',
+        'bao_setup.check_for_bao_update',
         return_value=(True, "updated", ))
     cpu_se = [
             (False, Version('1.0'), Version('1.0'), 'datalad_bao_ssh'),
             (False, Version('1.0'), Version('1.0'), 'datalad'),
         ]
     cpu = mocker.patch(
-        'datalad_bao_ssh.bao_setup.check_package_update',
+        'bao_setup.check_package_update',
         side_effect=cpu_se
     )
     mocker.patch(
-        'datalad_bao_ssh.bao_setup.update_renewal_scripts',
+        'bao_setup.update_renewal_scripts',
         return_value=[]
     )
 
     for pfm in ("linux", "windows", ):
         mocker.patch(
-            'datalad_bao_ssh.bao_setup.platform.system',
+            'bao_setup.platform.system',
             return_value=pfm)
 
         if pfm == "linux":
@@ -1233,10 +1233,10 @@ def test_update_requested_bao(mocker, mock_ui_message):
         else:
             exe = 'bao.exe'
         mocker.patch(
-            'datalad_bao_ssh.bao_setup.shutil.which',
+            'bao_setup.shutil.which',
             return_value=f"/usr/bin/{exe}"
         )
-        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True)
+        status = bao_setup.bao_setup.__call__(update=True)
         assert status == [{
             'action': 'bao_setup',
             'status': 'ok',
@@ -1245,12 +1245,12 @@ def test_update_requested_bao(mocker, mock_ui_message):
         cpu.side_effect = cpu_se
 
     mocker.patch(
-            'datalad_bao_ssh.bao_setup.shutil.which',
+            'bao_setup.shutil.which',
             return_value=None
     )
     cpu.side_effect = cpu_se
 
-    status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True)
+    status = bao_setup.bao_setup.__call__(update=True)
     assert status == [{
         'action': 'bao_setup',
         'status': 'ok',
@@ -1260,7 +1260,7 @@ def test_update_requested_bao(mocker, mock_ui_message):
     cpu.side_effect = cpu_se
 
     with pytest.raises(IncompleteResultsError):
-        status = datalad_bao_ssh.bao_setup.bao_setup.__call__(update=True)
+        status = bao_setup.bao_setup.__call__(update=True)
 
         assert status == [{
             'action': 'bao_setup',
@@ -1298,7 +1298,7 @@ def test_bao_setup(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        "bao_setup.dlcfg.obtain",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1306,7 +1306,7 @@ def test_bao_setup(
     ssh_environment['patches']['ui'].question.side_effect = [
         ssh_environment['username'], ]
 
-    status = list(bao_setup.__call__())
+    status = list(bao_setup.bao_setup.__call__())
     assert status == [{
         'action': 'bao_setup',
         'status': 'ok',
@@ -1385,11 +1385,11 @@ Match host git1.com exec "{exec_script}"
 
     for test_shell in ('/bin/bash', '/bin/zsh', ):
         mocker.patch(
-            "datalad_bao_ssh.bao_setup.shell",
+            "bao_setup.shell",
             return_value=test_shell)
         ssh_environment['patches']['ui'].question.side_effect = [
             ssh_environment['username']]
-        status = list(bao_setup.__call__())
+        status = list(bao_setup.bao_setup.__call__())
 
         with open(mod_dir / 'openbao_certificate_renew.sh', 'r') as template:
             with open(expected_script, 'w') as escript:
@@ -1444,7 +1444,7 @@ def test_bao_setup_gituser(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        "bao_setup.dlcfg.get",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1453,7 +1453,7 @@ def test_bao_setup_gituser(
     ssh_environment['patches']['ui'].question.side_effect = [
         ssh_environment['username']]
 
-    status = list(bao_setup.__call__())
+    status = list(bao_setup.bao_setup.__call__())
     assert status == [{
         'action': 'bao_setup',
         'status': 'ok',
@@ -1555,7 +1555,7 @@ def test_bao_setup_existing_config(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        "bao_setup.dlcfg.get",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1571,7 +1571,7 @@ Host myotherhost
     with open(ssh_config, 'w') as main_config:
         main_config.write(existing_config)
 
-    status = list(bao_setup.__call__())
+    status = list(bao_setup.bao_setup.__call__())
     assert status == [{
         'action': 'bao_setup',
         'status': 'ok',
@@ -1589,7 +1589,7 @@ Host myotherhost
     assert found is True
     assert content.count(include_line) == 1
     assert content == f'{include_line}\n\n{existing_config}'
-    status = list(bao_setup.__call__())
+    status = list(bao_setup.bao_setup.__call__())
     with open(ssh_config, 'r') as main_conf:
         content = main_conf.read()
     found = include_line in content
@@ -1606,13 +1606,13 @@ def test_bao_setup_bad_dns(
     user_response = ssh_environment['user_response']
     baosrv = user_response['BAOHOST']
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        "bao_setup.dlcfg.get",
         return_value=(
             "http://test.invalid/ssh_conf.json')}")
     )
     ssh_dir = ssh_environment['ssh_dir']
 
-    status = list(bao_setup.__call__())
+    status = list(bao_setup.bao_setup.__call__())
     assert status == [{
         'action': 'bao_setup',
         'status': 'ok',
@@ -1715,7 +1715,7 @@ def test_bao_setup_create_ssh(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.dlcfg.get",
+        "bao_setup.dlcfg.get",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1723,7 +1723,7 @@ def test_bao_setup_create_ssh(
     ssh_environment['patches']['ui'].question.side_effect = [
         ssh_environment['username'], ]
 
-    status = list(bao_setup.__call__())
+    status = list(bao_setup.bao_setup.__call__())
     assert status == [{
         'action': 'bao_setup',
         'status': 'ok',
@@ -1738,9 +1738,12 @@ def test_bao_setup_create_ssh(
 
 def test_bao_setup_user_exit(
         ssh_environment, requests_ca_bundle,
-        mock_no_bao):
+        mock_no_bao, mocker):
+    mocker.patch(
+        'bao_setup.get_config',
+        side_effect=Exception("Test"))
     ssh_environment['patches']['ui'].yesno.side_effect = (True, )
-    status = list(bao_setup.__call__())
+    status = list(bao_setup.bao_setup.__call__())
 
     assert status == [{'action': 'bao_setup', 'status': 'ok'}]
 
@@ -1749,12 +1752,12 @@ def test_bao_setup_permissions_issue(
         ssh_environment, requests_ca_bundle,
         mock_no_bao, mocker):
     mocker.patch(
-        "datalad_bao_ssh.bao_setup.tempfile.TemporaryFile",
+        "bao_setup.tempfile.TemporaryFile",
         side_effect=PermissionError("denied"),
     )
 
     with pytest.raises(IncompleteResultsError) as exc_info:
-        list(bao_setup.__call__())
+        list(bao_setup.bao_setup.__call__())
     assert "Failed at Checking your .ssh folder" in str(exc_info.value)
 
 
@@ -1767,10 +1770,10 @@ def test_bao_setup_shell_tcsh(
             ('Linux', '/bin/bash', ),
             ('Another', '/bin/sh', ), ):
         mocker.patch(
-            "datalad_bao_ssh.bao_setup.platform.system",
+            "bao_setup.platform.system",
             return_value=system[0])
 
-        shell = datalad_bao_ssh.bao_setup.shell()
+        shell = bao_setup.shell()
         assert shell == system[1]
 
 # Testing BASH renewal script
