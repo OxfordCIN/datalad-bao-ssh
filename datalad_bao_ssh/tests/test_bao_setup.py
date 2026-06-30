@@ -80,7 +80,7 @@ def mock_bao(mocker, tmp_path):
     shutil.copy(test_bao_script, bao_script)
     os.chmod(bao_script, 0o755)
     which = mocker.patch(
-        "bao_setup.shutil.which",
+        "datalad_bao_ssh.bao_setup.shutil.which",
         return_value=str(bao_script))
     return {
         'which': which,
@@ -91,10 +91,10 @@ def mock_bao(mocker, tmp_path):
 @pytest.fixture
 def mock_no_bao(mocker):
     mocker.patch(
-        "bao_setup.shutil.which",
+        "datalad_bao_ssh.bao_setup.shutil.which",
         return_value=None)
     mocker.patch(
-        "bao_setup.install_bao",
+        "datalad_bao_ssh.bao_setup.install_bao",
         side_effect=bao_setup.BaoInstallError()
     )
 
@@ -108,7 +108,7 @@ def datalad_ui(mocker):
             question=Mock(side_effect=questions)
         )
         ui = mocker.patch(
-            "bao_setup.ui",
+            "datalad_bao_ssh.bao_setup.ui",
             fake_ui
         )
         return ui
@@ -266,10 +266,10 @@ def ssh_environment(tmp_path, mocker, datalad_ui):
     )
     patches = {
         "Path.home": mocker.patch(
-            "bao_setup.Path.home",
+            "datalad_bao_ssh.bao_setup.Path.home",
             return_value=Path(tmp_path)),
         "ui": mocker.patch(
-            "bao_setup.ui",
+            "datalad_bao_ssh.bao_setup.ui",
             fake_ui),
     }
 
@@ -315,7 +315,7 @@ def mock_github(
         if no_sig:
             server_response['assets'].pop(-1)
         monkeypatch.setattr(
-            "bao_setup.certifi.where", lambda: ca_cert_path)
+            "datalad_bao_ssh.bao_setup.certifi.where", lambda: ca_cert_path)
 
         if not fail:
             httpserver.expect_request(
@@ -1298,7 +1298,7 @@ def test_bao_setup(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "bao_setup.dlcfg.obtain",
+        "datalad_bao_ssh.bao_setup.dlcfg.obtain",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1385,7 +1385,7 @@ Match host git1.com exec "{exec_script}"
 
     for test_shell in ('/bin/bash', '/bin/zsh', ):
         mocker.patch(
-            "bao_setup.shell",
+            "datalad_bao_ssh.bao_setup.shell",
             return_value=test_shell)
         ssh_environment['patches']['ui'].question.side_effect = [
             ssh_environment['username']]
@@ -1444,7 +1444,7 @@ def test_bao_setup_gituser(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "bao_setup.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.get",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1555,7 +1555,7 @@ def test_bao_setup_existing_config(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "bao_setup.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.get",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1606,7 +1606,7 @@ def test_bao_setup_bad_dns(
     user_response = ssh_environment['user_response']
     baosrv = user_response['BAOHOST']
     mocker.patch(
-        "bao_setup.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.get",
         return_value=(
             "http://test.invalid/ssh_conf.json')}")
     )
@@ -1715,7 +1715,7 @@ def test_bao_setup_create_ssh(
         "/ssh_conf.json").respond_with_json(
             server_response)
     mocker.patch(
-        "bao_setup.dlcfg.get",
+        "datalad_bao_ssh.bao_setup.dlcfg.get",
         return_value=(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
@@ -1752,7 +1752,7 @@ def test_bao_setup_permissions_issue(
         ssh_environment, requests_ca_bundle,
         mock_no_bao, mocker):
     mocker.patch(
-        "bao_setup.tempfile.TemporaryFile",
+        "datalad_bao_ssh.bao_setup.tempfile.TemporaryFile",
         side_effect=PermissionError("denied"),
     )
 
@@ -1770,7 +1770,7 @@ def test_bao_setup_shell_tcsh(
             ('Linux', '/bin/bash', ),
             ('Another', '/bin/sh', ), ):
         mocker.patch(
-            "bao_setup.platform.system",
+            "datalad_bao_ssh.bao_setup.platform.system",
             return_value=system[0])
 
         shell = bao_setup.shell()
