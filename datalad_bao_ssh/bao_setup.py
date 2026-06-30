@@ -12,7 +12,6 @@ from datalad import cfg as dlcfg
 from datalad.distribution.dataset import datasetmethod
 from datalad.interface.base import (Interface, build_doc, eval_results)
 from datalad.interface.results import get_status_dict
-from datalad.support.extensions import register_config
 from datalad.support.param import Parameter
 from datalad.ui import ui
 from sigstore.verify import Verifier
@@ -42,28 +41,6 @@ import zipfile
 lgr = logging.getLogger('datalad-extension-bao-ssh.bao_setup')
 REKOR_IDX = "https://rekor.sigstore.dev/api/v1/index/retrieve"
 REKOR_ENT = "https://rekor.sigstore.dev/api/v1/log/entries/{uuid}"
-
-
-register_config(
-    name="datalad.bao-ssh-config-url",
-    title="URL of configuration server to attempt auto-configuration from",
-    type=str,
-    default="https://neurodata.fmrib.ox.ac.uk/bao_config/openbao_ssh.json",
-    description="This URL, if contactable, will return a JSON configuration"
-    " that will be used to automatically configure the client. If it cannot"
-    " be contacted, the user will be prompted for option values",
-    scope="global"
-)
-
-register_config(
-    name="datalad.bao-ssh-bao-install-dir",
-    title="Directory to install 'bao' command in",
-    type=str,
-    default=Path.home() / ".baobin",
-    description="If the bao command is not installed system-wide, where"
-    " to install the script",
-    scope="global"
-)
 
 
 class BaoInstallError(Exception):
