@@ -508,8 +508,6 @@ class bao_setup(Interface):
     )
 
     @staticmethod
-    # decorator binds the command to the Dataset class as a method
-    @datasetmethod(name='ssh_setup')
     # generic handling of command results (logging, rendering, filtering, ...)
     @eval_results
     # signature must match parameter list above
