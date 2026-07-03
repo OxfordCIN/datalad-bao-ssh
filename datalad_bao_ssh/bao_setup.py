@@ -4,15 +4,14 @@ from __future__ import annotations
 __docformat__ = 'restructuredtext'
 
 from importlib.resources import as_file, files
-from importlib.metadata import (packages_distributions, version)
+from importlib.metadata import (version)
 from packaging.version import Version
 from pathlib import Path
+from typing import Any, Generator
 
 from datalad import cfg as dlcfg
-from datalad.distribution.dataset import datasetmethod
 from datalad.interface.base import (Interface, build_doc, eval_results)
 from datalad.interface.results import get_status_dict
-from datalad.support.extensions import register_config
 from datalad.support.param import Parameter
 from datalad.ui import ui
 from sigstore.verify import Verifier
@@ -35,6 +34,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import truststore
 import zipfile
 
 
@@ -43,33 +43,11 @@ REKOR_IDX = "https://rekor.sigstore.dev/api/v1/index/retrieve"
 REKOR_ENT = "https://rekor.sigstore.dev/api/v1/log/entries/{uuid}"
 
 
-register_config(
-    name="datalad.bao-ssh-config-url",
-    title="URL of configuration server to attempt auto-configuration from",
-    type=str,
-    default="https://neurodata.fmrib.ox.ac.uk/bao_config/openbao_ssh.json",
-    description="This URL, if contactable, will return a JSON configuration"
-    " that will be used to automatically configure the client. If it cannot"
-    " be contacted, the user will be prompted for option values",
-    scope="global"
-)
-
-register_config(
-    name="datalad.bao-ssh-bao-install-dir",
-    title="Directory to install 'bao' command in",
-    type=str,
-    default=Path.home() / ".baobin",
-    description="If the bao command is not installed system-wide, where"
-    " to install the script",
-    scope="global"
-)
-
-
 class BaoInstallError(Exception):
     pass
 
 
-def safe_extract_zip(zip_file: Path, path: Path):
+def safe_extract_zip(zip_file: zipfile.ZipFile, path: Path):
     abs_path = os.path.abspath(path)
     for member in zip_file.namelist():
         member_path = os.path.abspath(os.path.join(path, member))
@@ -78,7 +56,7 @@ def safe_extract_zip(zip_file: Path, path: Path):
     zip_file.extractall(path)
 
 
-def safe_extract_tar(tar_file: Path, path: Path):
+def safe_extract_tar(tar_file: tarfile.TarFile, path: Path):
     if 'filter' in inspect.signature(tar_file.extractall).parameters:
         tar_file.extractall(path, filter='data')
     else:
@@ -157,7 +135,8 @@ def bao_available(
     return release
 
 
-def install_bao(install_dir: Path, release: dict = bao_available()) -> str:
+def install_bao(install_dir: Path | str, release: dict = bao_available())\
+       -> str:
     ui.message(
             f"Attempting to install Openbao client 'bao' into {install_dir}"
         )
@@ -233,11 +212,11 @@ def install_bao(install_dir: Path, release: dict = bao_available()) -> str:
 
             verifier = Verifier.production()
             try:
-                with archive_path.open("rb") as artifact_file:
-                    verifier.verify_artifact(
-                        input_=artifact_file,
-                        bundle=bundle,
-                        policy=expected_identity)
+                input_bytes = archive_path.read_bytes()
+                verifier.verify_artifact(
+                    input_=input_bytes,
+                    bundle=bundle,
+                    policy=expected_identity)
             except VerificationError:
                 raise BaoInstallError("Download failed verification")
 
@@ -403,6 +382,15 @@ def get_renewal_confs(ssh_folder: Path) -> list[str]:
     return confs
 
 
+def get_config(url):
+    session = requests.Session()
+    r = session.get(
+        url,
+        timeout=10
+    )
+    return r.json()
+
+
 def get_config_from_renewal_conf(conf: Path) -> tuple[Path, dict]:
     config_keys = (
         'VERSION',
@@ -438,7 +426,7 @@ def get_config_from_renewal_conf(conf: Path) -> tuple[Path, dict]:
                         config[k] = line.split('=')[1].strip('\n').\
                             strip('"').strip("'")
             lgr.debug(line)
-    return script, config
+    return Path(script), config
 
 
 def install_certificate_renewal_script(
@@ -530,19 +518,18 @@ class bao_setup(Interface):
     )
 
     @staticmethod
-    # decorator binds the command to the Dataset class as a method
-    @datasetmethod(name='ssh_setup')
     # generic handling of command results (logging, rendering, filtering, ...)
     @eval_results
     # signature must match parameter list above
     # additional generic arguments are added by decorators
-    def __call__(update=False):
-        status_dict = {'action': 'bao_setup', 'status': 'ok'}
+    def __call__(update: bool = False) -> Generator[dict[str, Any], None, None]:  # pyright: ignore[reportIncompatibleMethodOverride] # noqa 503
+        truststore.inject_into_ssl()
+        status_dict: dict[str, Any] = {'action': 'bao_setup', 'status': 'ok'}
         ui.message(f"DataLad OpenBao SSH certificate integration ({VERSION})")
         install_dir = dlcfg.obtain("datalad.bao-ssh-bao-install-dir")
         system_bao = shutil.which("bao")
         ssh_folder = Path.home() / '.ssh'
-
+        stage = "Initialisation"
         if system_bao is not None:
             system = platform.system().lower()
             bao_binary = (
@@ -553,7 +540,7 @@ class bao_setup(Interface):
             messages = []
             # Check for updates to this package
             available, current, latest, package_name = check_package_update(
-                packages_distributions()[__package__][0], Version(VERSION))
+                'datalad-extension-bao-ssh', Version(VERSION))
             if available:
                 messages.append(
                     f"Update available for this plugin: {current} ->"
@@ -586,16 +573,18 @@ class bao_setup(Interface):
 
             # Check for user's SSH script being out of date
             try:
-                messages.extend(update_renewal_scripts(ssh_folder, VERSION))
+                messages.extend(update_renewal_scripts(
+                    ssh_folder, Version(VERSION)))
             except Exception as exc:
                 messages.append(str(exc))
+                mess_str = '\n'.join(messages)
                 status_dict.update(
                     {
                         'status': 'error',
                         'exc': exc,
                         'error_message': (
                             "Failed updating renewal script(s) "
-                            f"({'\n'.join(messages)})"
+                            f"({mess_str})"
                         ),
                     })
             else:
@@ -620,14 +609,9 @@ class bao_setup(Interface):
                 except BaoInstallError:
                     bao_binary = ""
 
-            session = requests.Session()
-            lgr.info("Attempting to download configuration")
             try:
-                r = session.get(
-                    dlcfg.obtain("datalad.bao-ssh-config-url"),
-                    timeout=10
-                )
-                config = r.json()
+                lgr.info("Attempting to download configuration")
+                config = get_config(dlcfg.obtain("datalad.bao-ssh-config-url"))
             except Exception:
                 config = prompt_for_config()
 

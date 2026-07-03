@@ -149,7 +149,7 @@ if [ -n "$BAOBIN" ]; then
   if [ "$BAOOPENID" = "0" ]; then
     "$BAOBIN" login -method="${BAOAUTH}" username="$username" </dev/tty
   else
-    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}" </dev/tty
+    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}"
   fi
   trap remove_token EXIT INT TERM
 else
