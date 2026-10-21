@@ -606,7 +606,8 @@ class bao_setup(Interface):
             if bao_binary == "":
                 try:
                     bao_binary = install_bao(install_dir=install_dir)
-                except BaoInstallError:
+                except BaoInstallError as e:
+                    ui.warning("Error installing Bao " + str(e))
                     bao_binary = ""
 
             try:
