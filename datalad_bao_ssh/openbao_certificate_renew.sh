@@ -121,8 +121,8 @@ else
     exit 1
   fi
   username=$(urlencode "$BAOUSERNAME")
-  printf "Passphrase: "
-  read -r -s PASSWORD
+  printf "Passphrase: " >/dev/tty
+  read -r -s PASSWORD </dev/tty
   echo ""
 fi
 
