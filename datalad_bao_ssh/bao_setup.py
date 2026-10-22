@@ -38,7 +38,7 @@ import truststore
 import zipfile
 
 
-lgr = logging.getLogger('datalad-extension-bao-ssh.bao_setup')
+lgr = logging.getLogger('datalad-bao-ssh.bao_setup')
 REKOR_IDX = "https://rekor.sigstore.dev/api/v1/index/retrieve"
 REKOR_ENT = "https://rekor.sigstore.dev/api/v1/log/entries/{uuid}"
 
@@ -540,7 +540,7 @@ class bao_setup(Interface):
             messages = []
             # Check for updates to this package
             available, current, latest, package_name = check_package_update(
-                'datalad-extension-bao-ssh', Version(VERSION))
+                'datalad-bao-ssh', Version(VERSION))
             if available:
                 messages.append(
                     f"Update available for this plugin: {current} ->"

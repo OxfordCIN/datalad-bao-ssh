@@ -713,22 +713,22 @@ def test_check_package_update(mocker):
     )
 
     assert bao_setup.check_package_update(
-        'datalad-extension-bao-ssh', Version('1.0.0')) ==\
+        'datalad-bao-ssh', Version('1.0.0')) ==\
         (
             True, Version('1.0.0'), Version('2.0.0'),
-            'datalad-extension-bao-ssh')
+            'datalad-bao-ssh')
 
     assert bao_setup.check_package_update(
-        'datalad-extension-bao-ssh', Version('2.0.0')) ==\
+        'datalad-bao-ssh', Version('2.0.0')) ==\
         (
             False, Version('2.0.0'), Version('2.0.0'),
-            'datalad-extension-bao-ssh')
+            'datalad-bao-ssh')
 
     assert bao_setup.check_package_update(
-        'datalad-extension-bao-ssh', Version('3.0.0')) ==\
+        'datalad-bao-ssh', Version('3.0.0')) ==\
         (
             False, Version('3.0.0'), Version('2.0.0'),
-            'datalad-extension-bao-ssh')
+            'datalad-bao-ssh')
 
 
 def test_check_package_update_neterr(mocker):
@@ -738,10 +738,10 @@ def test_check_package_update_neterr(mocker):
     )
 
     assert bao_setup.check_package_update(
-        'datalad-extension-bao-ssh', Version('1.0.0')) ==\
+        'datalad-bao-ssh', Version('1.0.0')) ==\
         (
             None, Version('1.0.0'), Version('1.0.0'),
-            'Failed to check for update of datalad-extension-bao-ssh - '
+            'Failed to check for update of datalad-bao-ssh - '
             'cannot access project URL')
 
 
@@ -760,11 +760,11 @@ def test_check_package_update_jsonerr(mocker):
     )
 
     assert bao_setup.check_package_update(
-        'datalad-extension-bao-ssh', Version('1.0.0')) ==\
+        'datalad-bao-ssh', Version('1.0.0')) ==\
         (
             None, Version('1.0.0'), Version('1.0.0'),
             'Unexpected version information obtained from PyPi'
-            ' for datalad-extension-bao-ssh')
+            ' for datalad-bao-ssh')
 
 
 def test_get_config_from_renewal_conf(tmp_path):
@@ -867,7 +867,7 @@ def test_update_requested_update_renewal_scripts_none(
 
     cpu = [
         (False, Version('1.0.0'), Version('1.0.0'),
-            'datalad-extension-bao-ssh'),
+            'datalad-bao-ssh'),
         (False, Version('1.0.0'), Version('1.0.0'),
             'datalad'),
     ]
@@ -1104,9 +1104,9 @@ def test_command_visible_to_datalad():
             (
                 '''Update available for this plugin: 1.0.1 -> 1.0.2
 Use your Python package manager to update, e.g.
-  pip install --upgrade datalad-extension-bao-ssh
+  pip install --upgrade datalad-bao-ssh
 or
-  uv lock --upgrade-package datalad-extension-bao-ssh
+  uv lock --upgrade-package datalad-bao-ssh
   uv sync
 
 Then re-run the updater with
@@ -1114,7 +1114,7 @@ Then re-run the updater with
                 True,
                 '1.0.1',
                 '1.0.2',
-                'datalad-extension-bao-ssh',
+                'datalad-bao-ssh',
             ),
             (
                 '''Update available for DataLad: 1.0.1 -> 1.0.2
@@ -1135,7 +1135,7 @@ or
                 False,
                 '1.0.1',
                 '1.0.1',
-                'datalad-extension-bao-ssh',
+                'datalad-bao-ssh',
             ),
             (
                 '',
@@ -1198,7 +1198,7 @@ def test_update_requested_check_package_update_neterr(mocker):
     msgs = status[0]['msg']
 
     assert msgs == '\n'.join([
-        'Failed to check for update of datalad-extension-bao-ssh - '
+        'Failed to check for update of datalad-bao-ssh - '
         'cannot access project URL',
         'Failed to check for update of datalad - '
         'cannot access project URL',
