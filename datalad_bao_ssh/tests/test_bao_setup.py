@@ -2117,13 +2117,23 @@ def test_renew_certificate_curl(httpserver, tmp_path, renew_certificate):
             make_handler(
                 ca_key, tmp_path, token, rc,
                 config))
-        output = sp.run(
-            rc['renew_scripts'][shell],
-            capture_output=True,
-            text=True,
-            input=f"{rc['password']}\n")
+        # The curl fallback reads the passphrase from /dev/tty so it works
+        # when this script is run by ssh's Match exec. Exercise it through a
+        # pty rather than stdin, which is not connected to /dev/tty.
+        child = pexpect.spawn(
+            str(rc['renew_scripts'][shell]),
+            encoding='utf-8',
+            timeout=10
+        )
+        output = StringIO()
+        child.logfile = output
+        child.expect_exact("Passphrase: ")
+        child.sendline(rc['password'])
+        child.expect(pexpect.EOF)
+        child.close()
+        full_output = output.getvalue()
+        assert child.exitstatus == 0, full_output
         now = datetime.datetime.now()
-        assert output.returncode == 0
 
         ssh_dir = rc['ssh_dir']
         key_file = (
@@ -2227,13 +2237,21 @@ def test_existing_certificate_curl(httpserver, tmp_path, renew_certificate):
         ).respond_with_handler(make_handler(
                 ca_key, tmp_path, token, rc,
                 config))
-        output = sp.run(
-            rc['renew_scripts'][shell],
-            capture_output=True,
-            text=True,
-            input=f'{rc["password"]}\n')
-        assert output.returncode == 0
-        assert 'Logging into access control server...' in output.stderr
+        # The curl fallback reads its passphrase from the controlling tty.
+        child = pexpect.spawn(
+            str(rc['renew_scripts'][shell]),
+            encoding='utf-8',
+            timeout=10
+        )
+        output = StringIO()
+        child.logfile = output
+        child.expect_exact("Passphrase: ")
+        child.sendline(rc['password'])
+        child.expect(pexpect.EOF)
+        child.close()
+        full_output = output.getvalue()
+        assert child.exitstatus == 0, full_output
+        assert 'Logging into access control server...' in full_output
 
         output = sp.run(
             rc['renew_scripts'][shell],
