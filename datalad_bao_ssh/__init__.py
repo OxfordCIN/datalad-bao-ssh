@@ -35,7 +35,7 @@ register_config(
     name="datalad.bao-ssh-config-url",
     title="URL of configuration server to attempt auto-configuration from",
     type=str,  # pyright: ignore[reportArgumentType]
-    default="https://neurodata.fmrib.ox.ac.uk/bao_config/openbao_ssh.json",  # pyright: ignore[reportArgumentType] # noqa: E501
+    default="https://datalad-bao-ssh-config.invalid/openbao_ssh.json",  # pyright: ignore[reportArgumentType] # noqa: E501
     description="This URL, if contactable, will return a JSON configuration"
     " that will be used to automatically configure the client. If it cannot"
     " be contacted, the user will be prompted for option values",
