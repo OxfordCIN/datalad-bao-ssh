@@ -205,9 +205,15 @@ def install_bao(install_dir: Path | str, release: dict = bao_available())\
             with bundle_path.open("r") as f:
                 bundle = Bundle.from_json(f.read())
 
+            tag = release["tag_name"]
+            match = re.fullmatch(r"v(\d+)\.(\d+)\.\d+(?:[-+].*)?", tag)
+            if not match:
+                raise ValueError(f"Unexpected OpenBao release tag: {tag}")
+            major, minor = match.groups()
+
             expected_identity = Identity(
                 identity="https://github.com/openbao/openbao/.github/"
-                f"workflows/release.yml@refs/tags/{release['tag_name']}",
+                f"workflows/release.yml@refs/heads/release/{major}.{minor}.x",
                 issuer="https://token.actions.githubusercontent.com")
 
             verifier = Verifier.production()
