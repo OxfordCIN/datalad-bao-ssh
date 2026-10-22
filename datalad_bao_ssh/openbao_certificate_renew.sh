@@ -146,10 +146,20 @@ fi
 
 if [ -n "$BAOBIN" ]; then
   debug "Logging in with bao with method ${BAOAUTH}"
+  bao_version=$("$BAOBIN" --version)
+  IFS=. read -r major minor _ <<< "${bao_version#* v}"
+
+  if [ "$major" -gt 2 ]; then
+    echo "Unsupported version of 'bao' command, this might not work" > /dev/tty
+  fi
   if [ "$BAOOPENID" = "0" ]; then
-    "$BAOBIN" login -method="${BAOAUTH}" username="$username" </dev/tty
+    if [ "$major" -eq "2" ] && [ "$minor" -lt "7" ]; then
+      "$BAOBIN" login -method="${BAOAUTH}" username="$username" </dev/tty
+    else
+      "$BAOBIN" login -method=userpass -path="${BAOAUTH}" username="$username" </dev/tty
+    fi
   else
-    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}"
+    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}" </dev/tty > /dev/tty
   fi
   trap remove_token EXIT INT TERM
 else
