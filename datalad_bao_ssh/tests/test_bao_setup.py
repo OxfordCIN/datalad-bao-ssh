@@ -92,7 +92,8 @@ def versioned_bao(tmp_path, monkeypatch, request):
         "https://api.github.com/repos/openbao/openbao/releases/tags/"
         f"v{version}")
     bao_script = bao_setup.install_bao(tmp_path, release)
-    assert bao_setup.bao_version(tmp_path) == version
+    installed_version = Version(bao_setup.bao_version(tmp_path))
+    assert installed_version.base_version == version
     monkeypatch.setenv("PATH", str(tmp_path), prepend=os.pathsep)
     return bao_script
 

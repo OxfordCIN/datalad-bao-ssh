@@ -27,7 +27,7 @@ style:
     - docker
   parallel:
     matrix:
-     - PYVER: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+     - PYVER: ["3.11", "3.12", "3.13", "3.14", "3.15"]
   image: python:$PYVER
   except:
     - tags
