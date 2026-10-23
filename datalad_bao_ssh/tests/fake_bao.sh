@@ -138,6 +138,21 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
+  --version|-v)
+    printf 'OpenBao v2.7.1 (fake)\n'
+    ;;
+
+  token)
+    sub="${1:-}"
+    shift || true
+    if [[ "$sub" == "lookup" ]]; then
+      printf '{"data":{"meta":{"username":"%s"}}}\n' \
+        "${BAO_FAKE_USERNAME:-joebloggs@mysuffix}"
+    else
+      die "unsupported token command: $sub"
+    fi
+    ;;
+
   login)
     method="token"
     format="text"

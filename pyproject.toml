@@ -64,7 +64,6 @@ include = ["datalad_bao_ssh*"]
 version = {attr = "datalad_bao_ssh.version.VERSION"}
 
 [tool.coverage.run]
-include = ["datalad_bao_ssh/*"]
 omit    = ["datalad_bao_ssh/tests/*"]
 
 [tool.pytest.ini_options]

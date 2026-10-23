@@ -13,6 +13,7 @@ BAOAUTH="**BAOAUTH**"
 BAOOPENID="**BAOOPENID**"
 BAOBIN="**BAOBIN**"
 BAOUSERNAME="**BAOUSERNAME**"
+BAOUSERSUFFIX="**BAOUSERSUFFIX**"
 
 ## End of configuration ##
 
@@ -85,16 +86,33 @@ debug "DataLad OpenBao SSH integration version $VERSION"
 
 if [ -f "$CERT" ]; then
   debug "Found $CERT"
-  expiry=$(certificate_expiry)
-  if ! epoc=$(date -d "$expiry" +%s 2>/dev/null); then
-    epoc=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$expiry" +%s)
+  # Check key is secure
+  if key_owner=$(stat -c '%u' "$KEY" 2>/dev/null); then
+    key_mode=$(stat -c '%a' "$KEY" 2>/dev/null)
+  else
+    key_owner=$(stat -f '%u' "$KEY")
+    key_mode=$(stat -f '%Lp' "$KEY")
   fi
-  now=$(date +%s)
-  debug "Expiry: $expiry, Epoc: $epoc, Now: $now"
-  if [ "$epoc" -gt $((now + 300)) ]; then
-    debug "Certificate not expired, exiting"
-    exit 0
+  if [ "$key_owner" != "$EUID" ] || [ "$key_mode" != "600" ]; then
+    error "Private key ${KEY} has insecure ownership/permissions"
+    exit 1
+  else
+    expiry=$(certificate_expiry)
+    if ! epoc=$(date -d "$expiry" +%s 2>/dev/null); then
+      epoc=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$expiry" +%s)
+    fi
+    now=$(date +%s)
+    debug "Expiry: $expiry, Epoc: $epoc, Now: $now"
+    if [ "$epoc" -gt $((now + 300)) ]; then
+      debug "Certificate not expired, exiting"
+      exit 0
+    fi
   fi
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+  error "jq command not found - this is necessary to read the bao login response"
+  exit 1
 fi
 
 # Look for bao command
@@ -105,12 +123,7 @@ if command -v bao >/dev/null 2>&1 || command -v "$BAOBIN" 2>&1; then
     VAULT_CACERT="$CACERT"
     export VAULT_CACERT
   fi
-  username="$BAOUSERNAME"
 else
-  if ! command -v jq >/dev/null 2>&1; then
-    error "jq command not found - this is necessary if 'bao' isn't installed"
-    exit 1
-  fi
   if ! command -v curl >/dev/null 2>&1; then
     error "curl command not found - this is necessary if 'bao' isn't installed"
     exit 1
@@ -120,10 +133,6 @@ else
     error "Can't find the 'bao' client necessary for logins" >&2
     exit 1
   fi
-  username=$(urlencode "$BAOUSERNAME")
-  printf "Passphrase: " >/dev/tty
-  read -r -s PASSWORD </dev/tty
-  echo ""
 fi
 
 if [ ! -d "$HOME/.ssh" ]; then
@@ -136,7 +145,7 @@ if [ ! -w "$HOME/.ssh" ]; then
   exit 1
 fi
 
-# Attempt Bao login
+# Attempt login
 info "Logging into access control server..."
 if [ -n "$CACERT" ]; then
   ca_opt=(--cacert "$CACERT")
@@ -144,22 +153,68 @@ else
   ca_opt=()
 fi
 
+if [ "$BAOOPENID" = "0" ]; then
+  if [ -z "$BAOUSERNAME" ]; then
+    printf "Username: " >/dev/tty
+    read -r BAOUSERNAME </dev/tty
+    echo ""
+  fi
+  printf "Passphrase: " >/dev/tty
+  read -r -s PASSWORD </dev/tty
+  echo ""
+  username="$BAOUSERNAME"
+fi
+url_username=$(urlencode "$BAOUSERNAME")
+
 if [ -n "$BAOBIN" ]; then
   debug "Logging in with bao with method ${BAOAUTH}"
+
   bao_version=$("$BAOBIN" --version)
-  IFS=. read -r major minor _ <<< "${bao_version#* v}"
+  IFS=. read -r major _ <<< "${bao_version#* v}"
 
   if [ "$major" -gt 2 ]; then
     echo "Unsupported version of 'bao' command, this might not work" > /dev/tty
+    debug "Unsupported major version ${major} detected"
   fi
   if [ "$BAOOPENID" = "0" ]; then
-    if [ "$major" -eq "2" ] && [ "$minor" -lt "7" ]; then
-      "$BAOBIN" login -method="${BAOAUTH}" username="$username" </dev/tty
-    else
-      "$BAOBIN" login -method=userpass -path="${BAOAUTH}" username="$username" </dev/tty
+    TOKEN=$(
+      printf '%s' "$PASSWORD" |
+      "$BAOBIN" write -format=json \
+        "auth/${BAOAUTH}/login/${url_username}" password=- |
+      jq -r '.auth.client_token'
+    )
+    unset PASSWORD
+    if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+      error "Login failed"
+      exit 1
     fi
+    BAO_TOKEN="$TOKEN"
+    export BAO_TOKEN
   else
-    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}" </dev/tty > /dev/tty
+    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}" > /dev/tty
+    account_name=$("$BAOBIN" token lookup -format=json |
+      jq -r '.data.meta.username // .data.meta.email // empty')
+    if [ -z "$account_name" ]; then
+      error "Unable to get the account name from the OpenBao token metadata"
+      exit 1
+    fi
+    if [ -n "$BAOUSERSUFFIX" ]; then
+      case "$account_name" in
+        *"$BAOUSERSUFFIX")
+          username="${account_name%"$BAOUSERSUFFIX"}"
+          ;;
+        *)
+          error "OpenBao account '$account_name' does not end with '$BAOUSERSUFFIX'"
+          exit 1
+          ;;
+      esac
+    else
+      username="$account_name"
+    fi
+    if [ -z "$username" ]; then
+      error "OpenBao account name is empty after removing the configured suffix"
+      exit 1
+    fi
   fi
   trap remove_token EXIT INT TERM
 else
@@ -171,7 +226,7 @@ else
       --request PUT \
       --header "X-Vault-Request: true" \
       --data-binary @- \
-      "${BAOSRV}/v1/auth/${BAOAUTH}/login/${username}" | jq -r '.auth.client_token')
+      "${BAOSRV}/v1/auth/${BAOAUTH}/login/${url_username}" | jq -r '.auth.client_token')
   unset PASSWORD
   if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
     error "Login failed"

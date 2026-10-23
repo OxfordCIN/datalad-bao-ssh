@@ -17,7 +17,7 @@ from datalad.ui import ui
 from sigstore.verify import Verifier
 from sigstore.errors import VerificationError
 from sigstore.models import Bundle
-from sigstore.verify.policy import Identity
+from sigstore.verify.policy import AnyOf, Identity
 from .version import VERSION
 
 import certifi
@@ -41,6 +41,7 @@ import zipfile
 lgr = logging.getLogger('datalad-bao-ssh.bao_setup')
 REKOR_IDX = "https://rekor.sigstore.dev/api/v1/index/retrieve"
 REKOR_ENT = "https://rekor.sigstore.dev/api/v1/log/entries/{uuid}"
+NOPWDAUTH = ('oidc', )
 
 
 class BaoInstallError(Exception):
@@ -211,10 +212,19 @@ def install_bao(install_dir: Path | str, release: dict = bao_available())\
                 raise ValueError(f"Unexpected OpenBao release tag: {tag}")
             major, minor = match.groups()
 
-            expected_identity = Identity(
-                identity="https://github.com/openbao/openbao/.github/"
-                f"workflows/release.yml@refs/heads/release/{major}.{minor}.x",
-                issuer="https://token.actions.githubusercontent.com")
+            identity_prefix = (
+                "https://github.com/openbao/openbao/.github/"
+                "workflows/release.yml@refs/")
+            issuer = "https://token.actions.githubusercontent.com"
+            expected_identity = AnyOf([
+                Identity(
+                    identity=(
+                        f"{identity_prefix}heads/release/{major}.{minor}.x"),
+                    issuer=issuer),
+                Identity(
+                    identity=f"{identity_prefix}tags/{tag}",
+                    issuer=issuer),
+            ])
 
             verifier = Verifier.production()
             try:
@@ -313,6 +323,13 @@ def prompt_for_config() -> dict:
             default=opt[1],
             title=opt[2]
         )
+    if config["BAOAUTH"] in NOPWDAUTH:
+        config["BAOUSERSUFFIX"] = ui.question(
+            "BAOUSERSUFFIX",
+            default="",
+            title="Suffix to remove from the OpenBao account name so that"
+            " it matches the username known to the RIA and Git services"
+            " (if required)")
     config['GIT_REQUIRES_USERNAME'] = ui.yesno(
             "Does your remote git server(s) use a per-user username?"
             " (Ordinarily GitLab/Hub server endpoints will have any"
@@ -408,7 +425,8 @@ def get_config_from_renewal_conf(conf: Path) -> tuple[Path, dict]:
         'BAOAUTH',
         'BAOOPENID',
         'BAOBIN',
-        'BAOUSERNAME', )
+        'BAOUSERNAME',
+        'BAOUSERSUFFIX', )
     config = {}
     match_host = re.compile(r'^Match host\b.*?\bexec\s+"([^"]+)"$')
     script = None
@@ -470,8 +488,11 @@ def update_renewal_scripts(ssh_folder: Path, version: Version) -> list[str]:
     renewal_confs = get_renewal_confs(ssh_folder)
     for conf in renewal_confs:
         script, config = get_config_from_renewal_conf(ssh_folder / conf)
-        if config['VERSION'] != version:
+        if (
+                config['VERSION'] != version
+                or 'BAOUSERSUFFIX' not in config):
             lgr.info(f"Updating renewal script ({script})")
+            config.setdefault('BAOUSERSUFFIX', '')
             config['VERSION'] = version
             install_certificate_renewal_script(ssh_folder, config)
             messages.append(
@@ -533,7 +554,7 @@ class bao_setup(Interface):
         status_dict: dict[str, Any] = {'action': 'bao_setup', 'status': 'ok'}
         ui.message(f"DataLad OpenBao SSH certificate integration ({VERSION})")
         install_dir = dlcfg.obtain("datalad.bao-ssh-bao-install-dir")
-        system_bao = shutil.which("bao")
+        system_bao = shutil.which(b"bao")
         ssh_folder = Path.home() / '.ssh'
         stage = "Initialisation"
         if system_bao is not None:
@@ -624,8 +645,10 @@ class bao_setup(Interface):
 
             # The following is a list of OpenBao methods that use external
             # services to collect the password
-            no_password_methods = ['oidc', ]
             if config:
+                # Ensure that existing installs that lack BAOUSERSUFFIX
+                # have this set to blank
+                config.setdefault('BAOUSERSUFFIX', '')
                 config['VERSION'] = VERSION
                 bao_username = ui.question(
                     "BAOUSERNAME",
@@ -634,7 +657,7 @@ class bao_setup(Interface):
                         "Enter your username for the DataLad service: ")
                 )
                 config['BAOUSERNAME'] = bao_username
-                if config['BAOAUTH'] in no_password_methods:
+                if config['BAOAUTH'] in NOPWDAUTH:
                     config['BAOOPENID'] = 1
                 else:
                     config['BAOOPENID'] = 0
