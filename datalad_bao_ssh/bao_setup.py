@@ -151,26 +151,38 @@ def install_bao(install_dir: Path | str, release: dict = bao_available())\
         raise BaoInstallError(f"Unrecognised architecture {machine}")
 
     if system == "linux":
-        fnend = f"_linux_{arch}.tar.gz"
+        release_os = "Linux"
+        extension = ".tar.gz"
     elif system == "darwin":
-        fnend = f"_darwin_{arch}.tar.gz"
+        release_os = "Darwin"
+        extension = ".tar.gz"
     elif system == "windows":
-        fnend = f"_windows_{arch}.zip"
+        release_os = "Windows"
+        extension = ".zip"
     else:
         raise BaoInstallError(f"Unsupported OS: {system}")
 
-    asset = None
+    tag = release["tag_name"]
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.\d+(?:[-+].*)?", tag)
+    if not match:
+        raise BaoInstallError(f"Unexpected OpenBao release tag: {tag}")
+    major, minor = match.groups()
+    version = tag.removeprefix("v")
+    go_arch = "amd64" if arch == "x86_64" else arch
+    asset_names = (
+        f"bao_{version}_{release_os}_{arch}{extension}",
+        f"openbao_{version}_{system}_{go_arch}{extension}",
+    )
+    asset = next(
+        (dict(a) for a in release["assets"] if a["name"] in asset_names),
+        None)
     bundle = None
-    for a in release["assets"]:
-        name = a["name"].lower()
-        if name.lower().endswith(fnend):
-            asset = dict(a)
-            break
-    for a in release["assets"]:
-        name = a["name"].lower()
-        if name.lower().endswith(f'{fnend}.sigstore.json'):
-            bundle = dict(a)
-            break
+    if asset:
+        bundle_name = f"{asset['name']}.sigstore.json"
+        bundle = next(
+            (dict(a) for a in release["assets"]
+             if a["name"] == bundle_name),
+            None)
     if not asset:
         raise BaoInstallError("Could not find a release for this OS")
     if not bundle:
@@ -205,12 +217,6 @@ def install_bao(install_dir: Path | str, release: dict = bao_available())\
 
             with bundle_path.open("r") as f:
                 bundle = Bundle.from_json(f.read())
-
-            tag = release["tag_name"]
-            match = re.fullmatch(r"v(\d+)\.(\d+)\.\d+(?:[-+].*)?", tag)
-            if not match:
-                raise ValueError(f"Unexpected OpenBao release tag: {tag}")
-            major, minor = match.groups()
 
             identity_prefix = (
                 "https://github.com/openbao/openbao/.github/"

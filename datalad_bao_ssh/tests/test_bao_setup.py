@@ -539,6 +539,7 @@ def test_safe_extract_tar_fallback_rejects_traversal(
             ('Linux', 'x86_64', '.tar.gz', 'missing', 'bao', ),
             ('Linux', 'x86_64', '.tar.gz', 'asstr', 'bao', ),
             ('Linux', 'x86_64', '.tar.gz', 'badtag', 'bao', ),
+            ('Linux', 'x86_64', '.tar.gz', 'newassetnames', 'bao', ),
         ])
 def test_install_bao(
         system, machine, ext, special, exe, tmp_path,
@@ -554,6 +555,15 @@ def test_install_bao(
     no_sig = True if special == 'nosig' else False
     gh = mock_github(
         archive_type=ext, os=system, arch=machine, no_sig=no_sig)
+    if special == 'newassetnames':
+        go_arch = 'amd64' if machine == 'x86_64' else machine
+        release_version = gh['server_response']['tag_name'].removeprefix('v')
+        archive_name = (
+            f"openbao_{release_version}_{system.lower()}_"
+            f"{go_arch}{ext}")
+        gh['server_response']['assets'][0]['name'] = archive_name
+        gh['server_response']['assets'][1]['name'] = (
+            f"{archive_name}.sigstore.json")
     if special == 'badtag':
         gh['server_response']['tag_name'] = 'latest'
     if special == 'missing':
