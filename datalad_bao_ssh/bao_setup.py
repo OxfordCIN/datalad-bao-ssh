@@ -330,6 +330,11 @@ def prompt_for_config() -> dict:
             title=opt[2]
         )
     if config["BAOAUTH"] in NOPWDAUTH:
+        config["BAOCALLBACKMODE"] = ui.question(
+            "BAOCALLBACKMODE",
+            default="direct",
+            title="OpenBao OIDC callback mode (client, direct or device)")
+    if config["BAOAUTH"] in NOPWDAUTH:
         config["BAOUSERSUFFIX"] = ui.question(
             "BAOUSERSUFFIX",
             default="",
@@ -429,6 +434,7 @@ def get_config_from_renewal_conf(conf: Path) -> tuple[Path, dict]:
         'BAOHOST',
         'BAOPORT',
         'BAOAUTH',
+        'BAOCALLBACKMODE',
         'BAOOPENID',
         'BAOBIN',
         'BAOUSERNAME',
@@ -461,6 +467,9 @@ def get_config_from_renewal_conf(conf: Path) -> tuple[Path, dict]:
 
 def install_certificate_renewal_script(
         ssh_folder: Path, config: dict) -> Path:
+    config.setdefault(
+        'BAOCALLBACKMODE',
+        'direct' if config.get('BAOOPENID') == '1' else '')
     ssh_exec = files("datalad_bao_ssh").joinpath(
         "openbao_certificate_renew.sh")
     user_ssh_exec = (
@@ -496,9 +505,17 @@ def update_renewal_scripts(ssh_folder: Path, version: Version) -> list[str]:
         script, config = get_config_from_renewal_conf(ssh_folder / conf)
         if (
                 config['VERSION'] != version
-                or 'BAOUSERSUFFIX' not in config):
+                or 'BAOUSERSUFFIX' not in config
+                or 'BAOCALLBACKMODE' not in config
+                or config.get('BAOCALLBACKMODE') ==
+                '**BAOCALLBACKMODE**'):
             lgr.info(f"Updating renewal script ({script})")
             config.setdefault('BAOUSERSUFFIX', '')
+            if config.get('BAOCALLBACKMODE') == '**BAOCALLBACKMODE**':
+                config.pop('BAOCALLBACKMODE')
+            config.setdefault(
+                'BAOCALLBACKMODE',
+                'direct' if config.get('BAOOPENID') == '1' else '')
             config['VERSION'] = version
             install_certificate_renewal_script(ssh_folder, config)
             messages.append(
@@ -655,6 +672,15 @@ class bao_setup(Interface):
                 # Ensure that existing installs that lack BAOUSERSUFFIX
                 # have this set to blank
                 config.setdefault('BAOUSERSUFFIX', '')
+                if config['BAOAUTH'] in NOPWDAUTH:
+                    if 'BAOCALLBACKMODE' not in config:
+                        config['BAOCALLBACKMODE'] = ui.question(
+                            "BAOCALLBACKMODE",
+                            default="direct",
+                            title="OpenBao OIDC callback mode (for example,"
+                                  " direct)")
+                else:
+                    config.setdefault('BAOCALLBACKMODE', '')
                 config['VERSION'] = VERSION
                 bao_username = ui.question(
                     "BAOUSERNAME",

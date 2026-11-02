@@ -177,6 +177,7 @@ def renew_certificate(
             "BAOHOST": baosrv,
             "BAOPORT": baoport,
             "BAOAUTH": "ldap" if not openid else 'oidc',
+            "BAOCALLBACKMODE": "direct",
             "BAOOPENID": "1" if openid else "0",
             "BAOBIN": bao,
             "BAOUSERNAME": (
@@ -833,6 +834,7 @@ def test_get_config_from_renewal_conf(tmp_path):
         'BAOHOST': baosrv,
         'BAOPORT': '999',
         'BAOAUTH': 'myauth',
+        'BAOCALLBACKMODE': 'device',
         'BAOOPENID': '0',
         'BAOBIN': '/usr/bin/bao',
         'BAOUSERNAME': 'freddy',
@@ -1032,6 +1034,7 @@ def test_check_for_renewal_script_update(tmp_path, mocker):
         "BAOBIN": '/usr/local/bin/bao',
         "BAOPORT": "8200",
         "BAOAUTH": "ldap",
+        "BAOCALLBACKMODE": "",
         "BAOOPENID": "0",
         "BAOUSERNAME": 'test_user',
         "BAOUSERSUFFIX": '@mysuffix',
@@ -1359,8 +1362,11 @@ def test_bao_setup(
             f"{httpserver.url_for('/ssh_conf.json')}")
     )
     ssh_dir = ssh_environment['ssh_dir']
-    ssh_environment['patches']['ui'].question.side_effect = [
-        ssh_environment['username'], ]
+    questions = []
+    if authmethod == 'oidc':
+        questions.append('device')
+    questions.append(ssh_environment['username'])
+    ssh_environment['patches']['ui'].question.side_effect = questions
 
     status = list(bao_setup.bao_setup.__call__())
     assert status == [{
@@ -1409,6 +1415,8 @@ Match host git1.com exec "{exec_script}"
     expected_script = ssh_environment['tmp_path'] / 'renewal_script'
     mod_dir = Path(__file__).parent.parent
     server_response['BAOOPENID'] = "1" if authmethod == 'oidc' else "0"
+    server_response['BAOCALLBACKMODE'] = (
+        'device' if authmethod == 'oidc' else '')
     server_response['BAOBIN'] = ""
     server_response['BAOUSERNAME'] = ssh_environment['username']
     server_response['BAOUSERSUFFIX'] = '@mysuffix'
@@ -2034,6 +2042,8 @@ def test_renew_certificate_openid(
         "BAO_FAKE_USERNAME",
         f"{openid_username}{rc['config']['BAOUSERSUFFIX']}"
     )
+    login_args_file = tmp_path / 'bao-login-args'
+    monkeypatch.setenv("BAO_FAKE_LOGIN_ARGS", str(login_args_file))
     monkeypatch.setenv(
         "PATH", str(mock_bao['script'].parent), prepend=os.pathsep)
     shell = renewal_shell
@@ -2053,6 +2063,12 @@ def test_renew_certificate_openid(
     child.close()
     now = datetime.datetime.now()
     assert child.exitstatus == 0, full_output
+    assert login_args_file.read_text().splitlines() == [
+        "-method=oidc",
+        "-path=oidc",
+        f"role={rc['config']['ROLE']}",
+        f"callbackmode={rc['config']['BAOCALLBACKMODE']}",
+    ]
     ssh_dir = rc['ssh_dir']
     key_file = (
         ssh_dir

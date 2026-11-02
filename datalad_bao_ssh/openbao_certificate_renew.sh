@@ -10,6 +10,7 @@ CERTTYPE="**CERTTYPE**"
 BAOHOST="**BAOHOST**"
 BAOPORT="**BAOPORT**"
 BAOAUTH="**BAOAUTH**"
+BAOCALLBACKMODE="**BAOCALLBACKMODE**"
 BAOOPENID="**BAOOPENID**"
 BAOBIN="**BAOBIN**"
 BAOUSERNAME="**BAOUSERNAME**"
@@ -191,7 +192,8 @@ if [ -n "$BAOBIN" ]; then
     BAO_TOKEN="$TOKEN"
     export BAO_TOKEN
   else
-    "$BAOBIN" login -method="${BAOAUTH}" role="${ROLE}" > /dev/tty
+    "$BAOBIN" login -method="${BAOAUTH}" -path="${BAOAUTH}" \
+      role="${ROLE}" callbackmode="${BAOCALLBACKMODE}" > /dev/tty
     account_name=$("$BAOBIN" token lookup -format=json |
       jq -r '.data.meta.username // .data.meta.email // empty')
     if [ -z "$account_name" ]; then

@@ -154,6 +154,9 @@ case "$cmd" in
     ;;
 
   login)
+    if [[ -n "${BAO_FAKE_LOGIN_ARGS:-}" ]]; then
+      printf '%s\n' "$@" >"$BAO_FAKE_LOGIN_ARGS"
+    fi
     method="token"
     format="text"
     token_only=false
